@@ -1,0 +1,46 @@
+# Binaries
+bin/
+lobster
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test coverage
+*.out
+*.test
+coverage.html
+
+# Environment files
+.env
+.env.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Data directories
+data/
+lobster-files/
+
+# Session data
+.sessions/
+*.session
+
+# Build artifacts
+dist/
+release/
+
+# Dependencies
+vendor/

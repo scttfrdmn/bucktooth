@@ -1,0 +1,12 @@
+BuckTooth Logo
+"No Claws All Teeth!"
+
+The logo features a fierce blue gopher with prominent buck teeth, holding a task list.
+This represents the Go-based AI assistant that gets things done efficiently.
+
+The tagline plays on:
+1. Gophers (Go mascot) have teeth, not claws
+2. Replacing OpenClaw with a Go implementation
+3. The aggressive, can-do attitude of the assistant
+
+Place the logo.png file in the root directory for README display.
