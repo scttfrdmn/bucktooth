@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Telegram channel integration via long-polling (#9)
+- Slack channel integration via Socket Mode (#10)
+- Planning agent with tool-backed step executor, activated by `agents.mode: planning` (#11)
+- Web search tool using Brave Search API (#13)
+- Calendar tool with local JSON event store (#12)
+- OpenTelemetry tracing with OTLP HTTP exporter, spans on message handling and agent processing (#14)
+
+### Fixed
+- Service name default corrected from "lobster" to "bucktooth" in tracing config
+
+## [0.2.0] - 2026-03-17
+
+### Added
+- WhatsApp channel integration via whatsmeow library with QR-code authentication and SQLite session storage
+- Redis-backed conversation memory store with configurable TTL and history trimming
+- Tool registry with dynamic tool registration and discovery
+- Calculator tool for arithmetic operations (add, subtract, multiply, divide, modulo)
+- Message formatter tool for platform-specific text formatting (Discord, plain, Markdown)
+- Sandboxed filesystem tool for file read/write/list/delete operations with path traversal protection
+- Tool-augmented agent path using ReAct pattern (agenkit ReActAgent) with automatic fallback to conversational
+- Unit tests for calculator and filesystem tools
+
 ## [0.1.0] - 2026-02-01
 
 ### Added
@@ -47,5 +70,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent processing overhead: ~2ms
 - Target throughput: 1,000 messages/second (Phase 4 goal)
 
-[unreleased]: https://github.com/scttfrdmn/bucktooth/compare/v0.1.0...HEAD
+[unreleased]: https://github.com/scttfrdmn/bucktooth/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/scttfrdmn/bucktooth/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/scttfrdmn/bucktooth/releases/tag/v0.1.0
