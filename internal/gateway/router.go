@@ -11,11 +11,16 @@ import (
 	"github.com/scttfrdmn/bucktooth/internal/channels"
 	"github.com/scttfrdmn/bucktooth/internal/config"
 	"github.com/scttfrdmn/bucktooth/internal/memory"
+	"github.com/scttfrdmn/bucktooth/internal/tools"
 )
+
+const systemPrompt = "You are a helpful AI assistant. You are friendly, concise, and helpful."
 
 // AgentRouter routes messages to appropriate agents
 type AgentRouter struct {
 	conversationalAgent *patterns.ConversationalAgent
+	llmRaw              *llm.AnthropicLLM
+	registry            *tools.Registry
 	memoryStore         memory.Store
 	logger              zerolog.Logger
 	config              config.AgentConfig
@@ -30,23 +35,37 @@ func (a *llmClientAdapter) Chat(ctx context.Context, messages []*agenkit.Message
 	return a.llm.Complete(ctx, messages)
 }
 
-// NewAgentRouter creates a new agent router
-func NewAgentRouter(cfg config.AgentConfig, memStore memory.Store, logger zerolog.Logger) (*AgentRouter, error) {
-	// Create LLM client based on provider
-	var llmClient patterns.LLMClient
+// llmAgent wraps AnthropicLLM as a stateless agenkit.Agent for use inside ReActAgent.
+type llmAgent struct {
+	llm *llm.AnthropicLLM
+}
 
+func (a *llmAgent) Name() string         { return "LLMAgent" }
+func (a *llmAgent) Capabilities() []string { return []string{"llm"} }
+func (a *llmAgent) Introspect() *agenkit.IntrospectionResult {
+	return &agenkit.IntrospectionResult{AgentName: "LLMAgent", Capabilities: a.Capabilities()}
+}
+func (a *llmAgent) Process(ctx context.Context, msg *agenkit.Message) (*agenkit.Message, error) {
+	return a.llm.Complete(ctx, []*agenkit.Message{msg})
+}
+
+// NewAgentRouter creates a new agent router
+func NewAgentRouter(cfg config.AgentConfig, memStore memory.Store, registry *tools.Registry, logger zerolog.Logger) (*AgentRouter, error) {
+	// Create LLM client based on provider
 	switch cfg.LLMProvider {
 	case "anthropic":
-		anthropicLLM := llm.NewAnthropicLLM(cfg.APIKey, cfg.LLMModel)
-		llmClient = &llmClientAdapter{llm: anthropicLLM}
+		// ok
 	default:
 		return nil, fmt.Errorf("unsupported LLM provider: %s", cfg.LLMProvider)
 	}
 
-	// Create conversational agent
+	anthropicLLM := llm.NewAnthropicLLM(cfg.APIKey, cfg.LLMModel)
+	llmClient := &llmClientAdapter{llm: anthropicLLM}
+
+	// Create conversational agent (used as fallback when no tools are registered)
 	conversationalAgent, err := patterns.NewConversationalAgent(&patterns.ConversationalAgentConfig{
 		LLMClient:    llmClient,
-		SystemPrompt: "You are a helpful AI assistant. You are friendly, concise, and helpful.",
+		SystemPrompt: systemPrompt,
 		MaxHistory:   cfg.MaxHistory,
 	})
 	if err != nil {
@@ -55,6 +74,8 @@ func NewAgentRouter(cfg config.AgentConfig, memStore memory.Store, logger zerolo
 
 	return &AgentRouter{
 		conversationalAgent: conversationalAgent,
+		llmRaw:              anthropicLLM,
+		registry:            registry,
 		memoryStore:         memStore,
 		logger:              logger.With().Str("component", "router").Logger(),
 		config:              cfg,
@@ -69,23 +90,49 @@ func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message
 		Str("content", msg.Content).
 		Msg("processing message")
 
-	// Create agenkit message
 	agentMessage := &agenkit.Message{
 		Role:    "user",
 		Content: msg.Content,
 	}
 
-	// Process with conversational agent (manages its own history)
-	response, err := ar.conversationalAgent.Process(ctx, agentMessage)
-	if err != nil {
-		ar.logger.Error().Err(err).Msg("agent processing failed")
-		return "", fmt.Errorf("agent processing failed: %w", err)
+	var responseText string
+
+	if ar.registry != nil && ar.registry.Enabled() {
+		// Tool-augmented path: use ReActAgent
+		inner := &llmAgent{llm: ar.llmRaw}
+		reactAgent, err := patterns.NewReActAgent(&patterns.ReActConfig{
+			Agent:    inner,
+			Tools:    ar.registry.GetAll(),
+			MaxSteps: 5,
+		})
+		if err != nil {
+			ar.logger.Error().Err(err).Msg("failed to create ReActAgent, falling back to conversational")
+			goto conversational
+		}
+
+		response, err := reactAgent.Process(ctx, agentMessage)
+		if err != nil {
+			ar.logger.Error().Err(err).Msg("ReActAgent processing failed")
+			return "", fmt.Errorf("agent processing failed: %w", err)
+		}
+
+		responseText = response.ContentString()
+		goto store
 	}
 
-	// Extract response content
-	responseText := response.Content
+conversational:
+	{
+		// Plain conversational path
+		response, err := ar.conversationalAgent.Process(ctx, agentMessage)
+		if err != nil {
+			ar.logger.Error().Err(err).Msg("agent processing failed")
+			return "", fmt.Errorf("agent processing failed: %w", err)
+		}
+		responseText = response.ContentString()
+	}
 
-	// Store in memory for cross-channel persistence
+store:
+	// Persist turn to memory
 	if err := ar.memoryStore.AddMessage(ctx, msg.UserID, memory.Message{
 		Role:      "user",
 		Content:   msg.Content,
@@ -112,6 +159,5 @@ func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message
 
 // Close cleans up resources
 func (ar *AgentRouter) Close() error {
-	// Cleanup if needed
 	return nil
 }
