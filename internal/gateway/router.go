@@ -8,6 +8,8 @@ import (
 	"github.com/scttfrdmn/agenkit/agenkit-go/agenkit"
 	"github.com/scttfrdmn/agenkit/agenkit-go/adapter/llm"
 	"github.com/scttfrdmn/agenkit/agenkit-go/patterns"
+	"go.opentelemetry.io/otel"
+	"github.com/scttfrdmn/bucktooth/internal/agents"
 	"github.com/scttfrdmn/bucktooth/internal/channels"
 	"github.com/scttfrdmn/bucktooth/internal/config"
 	"github.com/scttfrdmn/bucktooth/internal/memory"
@@ -84,6 +86,9 @@ func NewAgentRouter(cfg config.AgentConfig, memStore memory.Store, registry *too
 
 // ProcessMessage processes a message and returns a response
 func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message) (string, error) {
+	ctx, span := otel.Tracer("bucktooth/router").Start(ctx, "router.process_message")
+	defer span.End()
+
 	ar.logger.Info().
 		Str("user_id", msg.UserID).
 		Str("channel_id", msg.ChannelID).
@@ -96,6 +101,20 @@ func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message
 	}
 
 	var responseText string
+
+	// Planning mode: decompose task into steps and execute via ToolStepExecutor.
+	if ar.config.Mode == "planning" && ar.registry != nil {
+		executor := agents.NewToolStepExecutor(ar.registry, ar.llmRaw)
+		llmClient := &llmClientAdapter{llm: ar.llmRaw}
+		planAgent := agents.NewBuckToothPlanningAgent(llmClient, executor, 10)
+		response, err := planAgent.Process(ctx, agentMessage)
+		if err != nil {
+			ar.logger.Error().Err(err).Msg("planning agent failed")
+			return "", fmt.Errorf("agent processing failed: %w", err)
+		}
+		responseText = response.ContentString()
+		goto store
+	}
 
 	if ar.registry != nil && ar.registry.Enabled() {
 		// Tool-augmented path: use ReActAgent

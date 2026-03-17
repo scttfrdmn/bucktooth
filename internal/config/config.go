@@ -31,12 +31,14 @@ type ChannelConfig struct {
 
 // AgentConfig configures AI agents
 type AgentConfig struct {
-	LLMProvider string `yaml:"llm_provider"`
-	LLMModel    string `yaml:"llm_model"`
-	APIKey      string `yaml:"api_key"`
-	MaxHistory  int    `yaml:"max_history"`
+	LLMProvider string  `yaml:"llm_provider"`
+	LLMModel    string  `yaml:"llm_model"`
+	APIKey      string  `yaml:"api_key"`
+	MaxHistory  int     `yaml:"max_history"`
 	Temperature float64 `yaml:"temperature"`
-	MaxTokens   int    `yaml:"max_tokens"`
+	MaxTokens   int     `yaml:"max_tokens"`
+	// Mode selects the agent pattern: "conversational", "react" (default), or "planning".
+	Mode string `yaml:"mode"`
 }
 
 // ToolsConfig configures available tools
@@ -121,7 +123,7 @@ func DefaultConfig() *Config {
 			Tracing: TracingConfig{
 				Enabled:     false,
 				SampleRate:  0.1,
-				ServiceName: "lobster",
+				ServiceName: "bucktooth",
 			},
 		},
 	}
