@@ -24,6 +24,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/scttfrdmn/bucktooth/internal/channels/discord"
+	"github.com/scttfrdmn/bucktooth/internal/channels/whatsapp"
 	"github.com/scttfrdmn/bucktooth/internal/config"
 	"github.com/scttfrdmn/bucktooth/internal/gateway"
 )
@@ -56,7 +57,7 @@ func main() {
 	logger := setupLogging(cfg.Gateway.LogLevel)
 	log.Logger = logger
 
-	logger.Info().Msg("starting Lobster gateway")
+	logger.Info().Msg("starting BuckTooth gateway")
 	logger.Info().
 		Str("llm_provider", cfg.Agents.LLMProvider).
 		Str("llm_model", cfg.Agents.LLMModel).
@@ -70,6 +71,7 @@ func main() {
 	}
 
 	// Register enabled channels
+
 	if cfg.Channels["discord"].Enabled {
 		discordToken, ok := cfg.Channels["discord"].Auth["token"].(string)
 		if !ok || discordToken == "" {
@@ -83,6 +85,16 @@ func main() {
 
 		gw.RegisterChannel(discordChannel)
 		logger.Info().Msg("Discord channel registered")
+	}
+
+	if cfg.Channels["whatsapp"].Enabled {
+		whatsappChannel, err := whatsapp.NewWhatsAppChannel(cfg.Channels["whatsapp"], logger)
+		if err != nil {
+			logger.Fatal().Err(err).Msg("failed to create WhatsApp channel")
+		}
+
+		gw.RegisterChannel(whatsappChannel)
+		logger.Info().Msg("WhatsApp channel registered")
 	}
 
 	// Start gateway

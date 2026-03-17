@@ -10,6 +10,12 @@ channels:
     auth:
       token: ${DISCORD_BOT_TOKEN}
     options: {}
+  whatsapp:
+    enabled: false
+    auth:
+      session_file: ~/.bucktooth/whatsapp.db
+    options:
+      groups: false   # set true to handle group messages
 
 agents:
   llm_provider: anthropic
@@ -35,8 +41,15 @@ tools:
     enabled: false
 
 memory:
-  type: inmemory
+  type: inmemory   # or "redis"
   options: {}
+  # Redis options (when type: redis):
+  # options:
+  #   addr: localhost:6379
+  #   password: ""
+  #   db: 0
+  #   ttl: 24h
+  #   max_history: 50
 
 observability:
   metrics:
