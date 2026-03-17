@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -24,9 +25,12 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/scttfrdmn/bucktooth/internal/channels/discord"
+	slackchan "github.com/scttfrdmn/bucktooth/internal/channels/slack"
+	telegramchan "github.com/scttfrdmn/bucktooth/internal/channels/telegram"
 	"github.com/scttfrdmn/bucktooth/internal/channels/whatsapp"
 	"github.com/scttfrdmn/bucktooth/internal/config"
 	"github.com/scttfrdmn/bucktooth/internal/gateway"
+	"github.com/scttfrdmn/bucktooth/internal/observability"
 )
 
 var (
@@ -64,6 +68,18 @@ func main() {
 		Int("max_history", cfg.Agents.MaxHistory).
 		Msg("agent configuration")
 
+	// Initialise OpenTelemetry tracing.
+	tracerShutdown, err := observability.InitTracer(cfg.Observability.Tracing)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialise tracer: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := tracerShutdown(context.Background()); err != nil {
+			logger.Error().Err(err).Msg("tracer shutdown error")
+		}
+	}()
+
 	// Create gateway
 	gw, err := gateway.New(cfg, logger)
 	if err != nil {
@@ -95,6 +111,26 @@ func main() {
 
 		gw.RegisterChannel(whatsappChannel)
 		logger.Info().Msg("WhatsApp channel registered")
+	}
+
+	if cfg.Channels["telegram"].Enabled {
+		telegramChannel, err := telegramchan.NewTelegramChannel(cfg.Channels["telegram"], logger)
+		if err != nil {
+			logger.Fatal().Err(err).Msg("failed to create Telegram channel")
+		}
+
+		gw.RegisterChannel(telegramChannel)
+		logger.Info().Msg("Telegram channel registered")
+	}
+
+	if cfg.Channels["slack"].Enabled {
+		slackChannel, err := slackchan.NewSlackChannel(cfg.Channels["slack"], logger)
+		if err != nil {
+			logger.Fatal().Err(err).Msg("failed to create Slack channel")
+		}
+
+		gw.RegisterChannel(slackChannel)
+		logger.Info().Msg("Slack channel registered")
 	}
 
 	// Start gateway

@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"github.com/scttfrdmn/bucktooth/internal/channels"
 	"github.com/scttfrdmn/bucktooth/internal/config"
 	"github.com/scttfrdmn/bucktooth/internal/memory"
@@ -90,6 +93,27 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 		}
 		toolRegistry.Register(fsTool)
 		logger.Info().Str("sandbox", sandboxDir).Msg("filesystem tool registered")
+	}
+
+	if cfg.Tools.WebSearch.Enabled {
+		apiKey, _ := cfg.Tools.WebSearch.Options["api_key"].(string)
+		maxResults := 5
+		if v, ok := cfg.Tools.WebSearch.Options["max_results"].(int); ok && v > 0 {
+			maxResults = v
+		}
+		toolRegistry.Register(tools.NewWebSearchTool(apiKey, maxResults))
+		logger.Info().Msg("web_search tool registered")
+	}
+
+	if cfg.Tools.Calendar.Enabled {
+		storePath, _ := cfg.Tools.Calendar.Options["store_path"].(string)
+		calTool, err := tools.NewCalendarTool(storePath)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to create calendar tool: %w", err)
+		}
+		toolRegistry.Register(calTool)
+		logger.Info().Str("store", storePath).Msg("calendar tool registered")
 	}
 
 	// Create event bus
@@ -273,6 +297,14 @@ func (g *Gateway) handleMessageReceived(ctx context.Context, event Event) {
 	if msg == nil {
 		return
 	}
+
+	tracer := otel.Tracer("bucktooth/gateway")
+	ctx, span := tracer.Start(ctx, "gateway.handle_message",
+		trace.WithAttributes(
+			attribute.String("channel", msg.ChannelID),
+			attribute.String("user_id", msg.UserID),
+		))
+	defer span.End()
 
 	g.logger.Debug().
 		Str("channel", msg.ChannelID).
