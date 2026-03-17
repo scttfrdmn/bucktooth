@@ -141,7 +141,7 @@ func (d *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 
 	msg := &channels.Message{
 		ID:        m.ID,
-		ChannelID: m.ChannelID,
+		ChannelID: d.Name(), // channel adapter name ("discord") for routing
 		UserID:    m.Author.ID,
 		Username:  m.Author.Username,
 		Content:   m.Content,

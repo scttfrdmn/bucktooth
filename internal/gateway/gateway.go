@@ -10,6 +10,7 @@ import (
 	"github.com/scttfrdmn/bucktooth/internal/channels"
 	"github.com/scttfrdmn/bucktooth/internal/config"
 	"github.com/scttfrdmn/bucktooth/internal/memory"
+	"github.com/scttfrdmn/bucktooth/internal/tools"
 )
 
 // Gateway is the main application gateway
@@ -34,18 +35,68 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 	// Create memory store
 	var memStore memory.Store
 	switch cfg.Memory.Type {
-	case "inmemory":
+	case "inmemory", "":
 		memStore = memory.NewInMemoryStore()
+	case "redis":
+		opts := cfg.Memory.Options
+		addr, _ := opts["addr"].(string)
+		password, _ := opts["password"].(string)
+		db := 0
+		if v, ok := opts["db"].(int); ok {
+			db = v
+		}
+		ttl := 24 * time.Hour
+		if v, ok := opts["ttl"].(string); ok {
+			if parsed, err := time.ParseDuration(v); err == nil {
+				ttl = parsed
+			}
+		}
+		maxHistory := 50
+		if v, ok := opts["max_history"].(int); ok {
+			maxHistory = v
+		}
+		redisStore, err := memory.NewRedisStore(addr, password, db, ttl, maxHistory)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to create Redis memory store: %w", err)
+		}
+		memStore = redisStore
 	default:
 		cancel()
 		return nil, fmt.Errorf("unsupported memory type: %s", cfg.Memory.Type)
+	}
+
+	// Build tool registry from config
+	toolRegistry := tools.NewRegistry()
+	if cfg.Tools.Calculator.Enabled {
+		toolRegistry.Register(tools.NewCalculatorTool())
+		logger.Info().Msg("calculator tool registered")
+	}
+	if cfg.Tools.Message.Enabled {
+		toolRegistry.Register(tools.NewMessageFormatterTool())
+		logger.Info().Msg("message_formatter tool registered")
+	}
+	if cfg.Tools.FileSystem.Enabled {
+		opts := cfg.Tools.FileSystem.Options
+		sandboxDir, _ := opts["sandbox_dir"].(string)
+		maxFileSize := int64(0)
+		if v, ok := opts["max_file_size"].(int); ok {
+			maxFileSize = int64(v)
+		}
+		fsTool, err := tools.NewFilesystemTool(sandboxDir, maxFileSize)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to create filesystem tool: %w", err)
+		}
+		toolRegistry.Register(fsTool)
+		logger.Info().Str("sandbox", sandboxDir).Msg("filesystem tool registered")
 	}
 
 	// Create event bus
 	eventBus := NewEventBus(logger)
 
 	// Create agent router
-	agentRouter, err := NewAgentRouter(cfg.Agents, memStore, logger)
+	agentRouter, err := NewAgentRouter(cfg.Agents, memStore, toolRegistry, logger)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create agent router: %w", err)
@@ -243,10 +294,10 @@ func (g *Gateway) handleMessageReceived(ctx context.Context, event Event) {
 	// Publish agent completed event
 	g.eventBus.Publish(ctx, AgentCompletedEvent(msg, response))
 
-	// Send response back to the channel
-	channel, ok := g.channelRegistry.Get("discord") // TODO: Get correct channel
+	// Send response back to the source channel
+	channel, ok := g.channelRegistry.Get(msg.ChannelID)
 	if !ok {
-		g.logger.Error().Msg("channel not found")
+		g.logger.Error().Str("channel_id", msg.ChannelID).Msg("channel not found for routing")
 		return
 	}
 
