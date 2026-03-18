@@ -177,6 +177,14 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 			Msg("rate limiter enabled")
 	}
 
+	// Wire cost tracker if enabled.
+	var costTracker *CostTracker
+	if cfg.Observability.CostTracking.Enabled {
+		costTracker = NewCostTracker()
+		agentRouter.SetCostTracker(costTracker)
+		logger.Info().Msg("LLM cost tracking enabled")
+	}
+
 	// Wire memory summarizer if enabled.
 	if cfg.Memory.SummarizeEnabled && llmInstance != nil {
 		threshold := cfg.Memory.SummarizeThreshold
@@ -204,6 +212,9 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 	httpServer.SetSkillRegistry(agentRouter.SkillRegistry())
 	httpServer.SetDepChecker(agentRouter.SkillDepChecker())
 	httpServer.SetMemoryStore(memStore)
+	if costTracker != nil {
+		httpServer.SetCostTracker(costTracker)
+	}
 
 	// Register test channel routes and channel before the gateway struct is created.
 	if cfg.Gateway.TestChannel {

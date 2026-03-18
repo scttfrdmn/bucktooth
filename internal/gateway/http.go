@@ -61,6 +61,9 @@ type HTTPServer struct {
 
 	// Skill dep checker for GET /admin/skills/deps (nil when dep checking is disabled)
 	depChecker *skillsdep.DepChecker
+
+	// Cost tracker for GET /v1/usage (nil when cost tracking is disabled)
+	costTracker *CostTracker
 }
 
 // NewHTTPServer creates a new HTTP server
@@ -158,6 +161,11 @@ func (h *HTTPServer) SetScheduler(s *cronsched.Scheduler) {
 // SetDepChecker attaches the skill dep checker for the GET /admin/skills/deps endpoint.
 func (h *HTTPServer) SetDepChecker(dc *skillsdep.DepChecker) {
 	h.depChecker = dc
+}
+
+// SetCostTracker attaches the cost tracker for the GET /v1/usage endpoint.
+func (h *HTTPServer) SetCostTracker(ct *CostTracker) {
+	h.costTracker = ct
 }
 
 // BroadcastEvent sends payload to all connected dashboard WebSocket clients.
@@ -269,8 +277,7 @@ func (h *HTTPServer) handleDashboardData(w http.ResponseWriter, r *http.Request)
 		activeUsers = h.agentRouter.ActiveUsers()
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{
+	data := map[string]any{
 		"version":         h.version,
 		"uptime_seconds":  snap.UptimeSeconds,
 		"messages_in":     snap.MessagesIn,
@@ -280,8 +287,37 @@ func (h *HTTPServer) handleDashboardData(w http.ResponseWriter, r *http.Request)
 		"active_users":    activeUsers,
 		"channels":        channelInfo,
 		"recent_messages": snap.Recent,
-	}); err != nil {
+	}
+	if h.costTracker != nil {
+		summary := h.costTracker.Summary()
+		data["cost_usd_total"] = summary.TotalCostUSD
+		data["cost_by_model"] = summary.ByModel
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(data); err != nil {
 		h.logger.Error().Err(err).Msg("failed to encode dashboard data response")
+	}
+}
+
+// handleUsage handles GET /v1/usage and returns cumulative LLM cost and token totals.
+func (h *HTTPServer) handleUsage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var summary CostSummary
+	if h.costTracker != nil {
+		summary = h.costTracker.Summary()
+	}
+	if summary.ByModel == nil {
+		summary.ByModel = []ModelCost{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(summary); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode usage response")
 	}
 }
 
@@ -744,6 +780,7 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	// OpenAI-compatible endpoints (Bearer-token protected when configured)
 	mux.HandleFunc("/v1/chat/completions", h.handleCompletions)
 	mux.HandleFunc("/v1/models", h.handleModels)
+	mux.HandleFunc("/v1/usage", h.handleUsage)
 
 	// Programmatically registered extra routes (e.g. test channel)
 	for pattern, handler := range h.extraRoutes {

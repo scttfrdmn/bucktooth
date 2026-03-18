@@ -1,7 +1,7 @@
 # BuckTooth vs OpenClaw — Feature Gap Analysis
 
-**Date**: 2026-03-18 (updated 2026-03-18 for v0.12.0)
-**BuckTooth version**: v0.12.0
+**Date**: 2026-03-18 (updated 2026-03-18 for v0.13.0)
+**BuckTooth version**: v0.13.0
 **OpenClaw version**: v2026.3.13 (released 2026-03-14)
 
 OpenClaw ([github.com/openclaw/openclaw](https://github.com/openclaw/openclaw)) is a TypeScript/Node.js
@@ -16,7 +16,7 @@ runtime profile (single binary, low memory, Kubernetes-native).
 | Attribute | BuckTooth | OpenClaw |
 |-----------|-----------|---------|
 | Language | Go | TypeScript / Node.js ≥22 |
-| Version | v0.12.0 | v2026.3.13 |
+| Version | v0.13.0 | v2026.3.13 |
 | Binary | Single static binary (~25 MB) | Node.js runtime required |
 | License | Apache 2.0 | MIT |
 | Helm chart | ✅ | ❌ |
@@ -34,7 +34,7 @@ runtime profile (single binary, low memory, Kubernetes-native).
 | WhatsApp (whatsmeow) | ✅ | ✅ |
 | Microsoft Teams | ✅ v0.9.0 | ✅ |
 | Teams HMAC activity validation | ✅ v0.11.0 | N/A |
-| Signal | ❌ | ✅ |
+| Signal | ✅ v0.13.0 | ✅ |
 | iMessage (BlueBubbles) | ❌ | ✅ |
 | Matrix / IRC / LINE | ❌ | ✅ |
 | Mattermost / Nextcloud | ❌ | ✅ |
@@ -143,6 +143,7 @@ completing the core ClawHub compatibility layer.
 | Message statistics + ring buffer | ✅ v0.5.0 | ✅ |
 | `/dashboard/data` JSON endpoint | ✅ v0.5.0 | ✅ |
 | Token usage / cost tracking | ✅ v0.6.0 | ✅ |
+| LLM USD cost tracking + GET /v1/usage | ✅ v0.13.0 | ✅ (ClawMetry) |
 | Purpose-built AI metrics dashboard | ❌ | ✅ (ClawMetry) |
 
 ---
@@ -173,6 +174,7 @@ completing the core ClawHub compatibility layer.
 | Helm chart | ✅ | ❌ |
 | Distroless/minimal image | ✅ | ❌ |
 | Test harness (zero-credential CI) | ✅ v0.4.5 | partial |
+| GitHub Actions CI/CD | ✅ v0.13.0 | ✅ |
 | Admin API | ✅ v0.9.0 | ✅ |
 | Tailscale / public tunnel | ❌ | ✅ |
 | Remote device pairing | ❌ | ✅ |
@@ -191,9 +193,16 @@ Companion apps and voice are out of scope for a Go gateway.
 2. ✅ **Browser automation (Chrome CDP)** — `browser_enabled: true` in `tools` config
 3. ✅ **GET /v1/models endpoint** — OpenAI-compatible model listing
 
-### Larger investments — v0.13.x+
-4. **Signal channel** — libsignal complexity, device pairing
-5. **ClawMetry equivalent** — purpose-built observability dashboard
+### Shipped in v0.13.0
+4. ✅ **Signal channel** — via signal-cli JSON-RPC WebSocket daemon (`signald_url` in channel auth)
+5. ✅ **LLM cost tracking** — `cost_tracking.enabled: true` in `observability` config; exposes `GET /v1/usage`
+6. ✅ **GitHub Actions CI/CD** — `.github/workflows/ci.yml` (push/PR) + `release.yml` (tag → release)
+7. ✅ **Harness integration test expansion** — `/v1/models`, `/admin/skills/deps`, `/v1/usage`, Signal unavailability
+
+### Larger investments — v0.14.x+
+- **Device pairing approval flow** — Signal device pairing, exec approval gates
+- **ClawMetry equivalent** — purpose-built observability dashboard
+- iMessage/Matrix channels
 
 ### Out of scope for BuckTooth core
 - Companion macOS/iOS/Android native apps

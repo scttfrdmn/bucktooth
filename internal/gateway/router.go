@@ -44,6 +44,7 @@ type AgentRouter struct {
 	summarizer      *memory.Summarizer
 	rateLimiter     *RateLimiter
 	userPrefs       *UserPrefs
+	costTracker     *CostTracker // nil when cost tracking is disabled
 }
 
 // llmClientAdapter wraps an LLM to implement the patterns.LLMClient interface
@@ -221,6 +222,11 @@ func (ar *AgentRouter) SetRateLimiter(rl *RateLimiter) {
 // SetUserPrefs attaches the UserPrefs store used for /system prompt overrides.
 func (ar *AgentRouter) SetUserPrefs(up *UserPrefs) {
 	ar.userPrefs = up
+}
+
+// SetCostTracker attaches a CostTracker that records per-model LLM costs.
+func (ar *AgentRouter) SetCostTracker(ct *CostTracker) {
+	ar.costTracker = ct
 }
 
 // evictAgent removes a user's cached agent so it is re-created with fresh config
@@ -470,6 +476,9 @@ func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message
 		if ar.stats != nil {
 			if in, out := extractTokenUsage(response); in > 0 || out > 0 {
 				ar.stats.RecordTokens(in, out)
+				if ar.costTracker != nil {
+					ar.costTracker.Track(ar.config.LLMProvider, ar.config.LLMModel, in, out)
+				}
 			}
 		}
 		responseText = response.ContentString()
@@ -489,6 +498,9 @@ func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message
 		if ar.stats != nil {
 			if in, out := extractTokenUsage(response); in > 0 || out > 0 {
 				ar.stats.RecordTokens(in, out)
+				if ar.costTracker != nil {
+					ar.costTracker.Track(ar.config.LLMProvider, ar.config.LLMModel, in, out)
+				}
 			}
 		}
 		responseText = response.ContentString()
@@ -516,6 +528,9 @@ func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message
 		if ar.stats != nil {
 			if in, out := extractTokenUsage(response); in > 0 || out > 0 {
 				ar.stats.RecordTokens(in, out)
+				if ar.costTracker != nil {
+					ar.costTracker.Track(ar.config.LLMProvider, ar.config.LLMModel, in, out)
+				}
 			}
 		}
 		responseText = response.ContentString()
@@ -534,6 +549,9 @@ conversational:
 		if ar.stats != nil {
 			if in, out := extractTokenUsage(response); in > 0 || out > 0 {
 				ar.stats.RecordTokens(in, out)
+				if ar.costTracker != nil {
+					ar.costTracker.Track(ar.config.LLMProvider, ar.config.LLMModel, in, out)
+				}
 			}
 		}
 		responseText = response.ContentString()

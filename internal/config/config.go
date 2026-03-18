@@ -150,8 +150,14 @@ type SkillsConfig struct {
 
 // ObservabilityConfig configures metrics and tracing
 type ObservabilityConfig struct {
-	Metrics MetricsConfig `yaml:"metrics"`
-	Tracing TracingConfig `yaml:"tracing"`
+	Metrics      MetricsConfig      `yaml:"metrics"`
+	Tracing      TracingConfig      `yaml:"tracing"`
+	CostTracking CostTrackingConfig `yaml:"cost_tracking"`
+}
+
+// CostTrackingConfig enables per-model USD cost tracking and the GET /v1/usage endpoint.
+type CostTrackingConfig struct {
+	Enabled bool `yaml:"enabled"` // default false
 }
 
 // MetricsConfig configures Prometheus metrics

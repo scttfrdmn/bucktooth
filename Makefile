@@ -108,3 +108,13 @@ test-harness:
 ## check: Run all checks (fmt, vet, lint, test)
 check: fmt vet lint test
 	@echo "All checks passed!"
+
+## ci: Run checks suitable for CI (no integration tests, no lint requirement)
+ci: fmt vet test
+	@echo "CI checks passed!"
+
+## release-tag: Create and push a version tag (usage: make release-tag VERSION=0.13.0)
+release-tag:
+	@test -n "$(VERSION)" || (echo "VERSION is required: make release-tag VERSION=0.13.0" && exit 1)
+	git tag v$(VERSION)
+	git push origin v$(VERSION)

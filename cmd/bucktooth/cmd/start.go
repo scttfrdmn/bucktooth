@@ -25,6 +25,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/scttfrdmn/bucktooth/internal/channels/discord"
+	signalchan "github.com/scttfrdmn/bucktooth/internal/channels/signal"
 	slackchan "github.com/scttfrdmn/bucktooth/internal/channels/slack"
 	teamschan "github.com/scttfrdmn/bucktooth/internal/channels/teams"
 	telegramchan "github.com/scttfrdmn/bucktooth/internal/channels/telegram"
@@ -143,6 +144,19 @@ func runStart(cmd *cobra.Command, args []string) error {
 		gw.RegisterChannel(teamsChannel)
 		gw.Handle("/channels/teams/messages", http.HandlerFunc(teamsChannel.HandleMessage))
 		logger.Info().Msg("Teams channel registered")
+	}
+
+	if cfg.Channels["signal"].Enabled {
+		opts := cfg.Channels["signal"].Auth
+		phone, _ := opts["phone_number"].(string)
+		signaldURL, _ := opts["signald_url"].(string)
+		if phone == "" || signaldURL == "" {
+			logger.Warn().Msg("signal channel enabled but phone_number or signald_url not set — skipping")
+		} else {
+			signalChannel := signalchan.New(phone, signaldURL, logger)
+			gw.RegisterChannel(signalChannel)
+			logger.Info().Str("phone", phone).Msg("Signal channel registered")
+		}
 	}
 
 	// Start gateway
