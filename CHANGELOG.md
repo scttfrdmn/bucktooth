@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-17
+
+### Fixed
+- `internal/gateway/router.go`: per-user `ConversationalAgent` isolation — single shared instance was not goroutine-safe; each user now gets their own agent with isolated history
+
+### Added
+- `internal/gateway/stats.go`: `Stats` with lock-free `atomic.Uint64` message counters, 50-entry recent-message ring buffer (newest-first), and uptime tracking
+- `internal/gateway/userprefs.go`: `UserPrefs` store for per-user preferred response channel
+- `GET /live` — liveness probe (always 200); `GET /ready` — readiness probe (503 if no channel operational)
+- `GET /dashboard/data` — JSON stats endpoint (version, uptime, counters, active users, channels, recent messages)
+- Dashboard Basic auth via `gateway.dashboard_auth_password` config / `DASHBOARD_AUTH_PASSWORD` env
+- `GET /users/:user_id/preferences`, `POST /users/:user_id/preferences` — cross-channel routing preferences
+- `AgentRouter.ActiveUsers() int` — live count of distinct users with active agents
+- `/plan <task>` command prefix activates planning agent per-message regardless of `agents.mode`
+- `agents.api_base` config field / `ANTHROPIC_API_BASE` env var for Anthropic endpoint override (stored; pending agenkit-go base URL support)
+
+## [0.4.5] - 2026-03-17
+
+### Added
+- `StubLLM` implementing `llm.LLM`; echo mode returns `"echo: <input>"`, fixed-response mode via `agents.stub_response` config field
+- `TestChannel` with `POST /test/send` and `GET /test/responses` HTTP endpoints for integration testing
+- `configs/harness.yaml` — zero-credential harness configuration (stub LLM + test channel + inmemory store)
+- `Dockerfile.harness` — alpine-based image with `wget` for healthcheck
+- `docker-compose.harness.yml` — single-service harness compose (no credentials, no Redis)
+- Integration test suite in `harness/harness_test.go` (`//go:build integration`): `TestHealthEndpoint`, `TestSendAndReceiveEcho`, `TestMultipleMessages`
+- `make test-harness` target: spins up harness, runs integration tests, tears down
+
+### Changed
+- `internal/gateway/router.go`: `AgentRouter` now accepts `llm.LLM` interface; `NewAgentRouter` switches on `llm_provider: stub` to inject `StubLLM`
+- `internal/agents/planning.go`: `ToolStepExecutor.llm` changed from concrete `*llm.AnthropicLLM` to `llm.LLM` interface
+- `internal/gateway/http.go`: `HTTPServer` now supports `Handle(pattern, handler)` for programmatic route registration
+- `internal/config/config.go`: `GatewayConfig.TestChannel` and `AgentConfig.StubResponse` fields added
+
 ## [0.4.1] - 2026-03-17
 
 ### Changed
@@ -108,7 +141,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent processing overhead: ~2ms
 - Target throughput: 1,000 messages/second (Phase 4 goal)
 
-[unreleased]: https://github.com/scttfrdmn/bucktooth/compare/v0.4.1...HEAD
+[unreleased]: https://github.com/scttfrdmn/bucktooth/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/scttfrdmn/bucktooth/compare/v0.4.5...v0.5.0
+[0.4.5]: https://github.com/scttfrdmn/bucktooth/compare/v0.4.1...v0.4.5
 [0.4.1]: https://github.com/scttfrdmn/bucktooth/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/scttfrdmn/bucktooth/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/scttfrdmn/bucktooth/compare/v0.2.0...v0.3.0

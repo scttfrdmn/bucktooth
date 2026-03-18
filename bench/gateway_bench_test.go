@@ -105,7 +105,7 @@ func BenchmarkHTTPServerNew(b *testing.B) {
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = gateway.NewHTTPServer(8080, registry, logger)
+		_ = gateway.NewHTTPServer(8080, registry, nil, gateway.NewStats(), logger)
 	}
 }
 

@@ -16,10 +16,12 @@ type Config struct {
 
 // GatewayConfig configures the gateway server
 type GatewayConfig struct {
-	WebSocketPort   int           `yaml:"websocket_port"`
-	HTTPPort        int           `yaml:"http_port"`
-	LogLevel        string        `yaml:"log_level"`
-	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
+	WebSocketPort        int           `yaml:"websocket_port"`
+	HTTPPort             int           `yaml:"http_port"`
+	LogLevel             string        `yaml:"log_level"`
+	ShutdownTimeout      time.Duration `yaml:"shutdown_timeout"`
+	TestChannel          bool          `yaml:"test_channel"`
+	DashboardAuthPassword string       `yaml:"dashboard_auth_password"`
 }
 
 // ChannelConfig configures a messaging channel
@@ -31,12 +33,14 @@ type ChannelConfig struct {
 
 // AgentConfig configures AI agents
 type AgentConfig struct {
-	LLMProvider string  `yaml:"llm_provider"`
-	LLMModel    string  `yaml:"llm_model"`
-	APIKey      string  `yaml:"api_key"`
-	MaxHistory  int     `yaml:"max_history"`
-	Temperature float64 `yaml:"temperature"`
-	MaxTokens   int     `yaml:"max_tokens"`
+	LLMProvider  string  `yaml:"llm_provider"`
+	LLMModel     string  `yaml:"llm_model"`
+	APIKey       string  `yaml:"api_key"`
+	APIBase      string  `yaml:"api_base"` // optional: override Anthropic API endpoint (e.g. for proxies)
+	MaxHistory   int     `yaml:"max_history"`
+	Temperature  float64 `yaml:"temperature"`
+	MaxTokens    int     `yaml:"max_tokens"`
+	StubResponse string  `yaml:"stub_response"` // empty = echo mode
 	// Mode selects the agent pattern: "conversational", "react" (default), or "planning".
 	Mode string `yaml:"mode"`
 }

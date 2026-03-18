@@ -2,9 +2,11 @@ package gateway
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,19 +28,62 @@ type HTTPServer struct {
 	dashMu       sync.RWMutex
 	dashUpgrader websocket.Upgrader
 	staticFiles  http.Handler
+
+	// Stats, agent router, and user prefs for dashboard/data endpoint
+	stats       *Stats
+	agentRouter *AgentRouter
+	userPrefs   *UserPrefs
+
+	// Precomputed "Basic <b64>" string; empty means no auth required
+	dashAuthHash string
+
+	// Version string for /dashboard/data
+	version string
+
+	// Extra routes registered before server start
+	extraRoutes map[string]http.Handler
 }
 
 // NewHTTPServer creates a new HTTP server
-func NewHTTPServer(port int, registry *channels.ChannelRegistry, logger zerolog.Logger) *HTTPServer {
+func NewHTTPServer(port int, registry *channels.ChannelRegistry, agentRouter *AgentRouter, stats *Stats, logger zerolog.Logger) *HTTPServer {
 	return &HTTPServer{
 		port:            port,
 		channelRegistry: registry,
+		agentRouter:     agentRouter,
+		stats:           stats,
 		logger:          logger.With().Str("component", "http").Logger(),
 		dashClients:     make(map[*websocket.Conn]bool),
 		dashUpgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
+		extraRoutes: make(map[string]http.Handler),
 	}
+}
+
+// SetDashboardAuth enables Basic auth on dashboard routes using the given password.
+// An empty password disables auth (default).
+func (h *HTTPServer) SetDashboardAuth(password string) {
+	if password == "" {
+		h.dashAuthHash = ""
+		return
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte("bucktooth:" + password))
+	h.dashAuthHash = "Basic " + encoded
+}
+
+// SetVersion sets the version string returned by /dashboard/data.
+func (h *HTTPServer) SetVersion(v string) {
+	h.version = v
+}
+
+// SetUserPrefs attaches the UserPrefs store for the preferences API.
+func (h *HTTPServer) SetUserPrefs(up *UserPrefs) {
+	h.userPrefs = up
+}
+
+// Handle registers an additional route before the server starts.
+func (h *HTTPServer) Handle(pattern string, handler http.Handler) {
+	h.extraRoutes[pattern] = handler
 }
 
 // SetStaticFiles sets the handler used to serve the embedded web dashboard.
@@ -90,24 +135,167 @@ func (h *HTTPServer) handleDashWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// dashAuthMiddleware enforces Basic auth when a password has been configured.
+func (h *HTTPServer) dashAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.dashAuthHash != "" {
+			if r.Header.Get("Authorization") != h.dashAuthHash {
+				w.Header().Set("WWW-Authenticate", `Basic realm="bucktooth"`)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// handleLive is the liveness probe — always returns 200.
+func (h *HTTPServer) handleLive(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "alive"}); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode live response")
+	}
+}
+
+// handleReady is the readiness probe — returns 503 when no channel is healthy.
+func (h *HTTPServer) handleReady(w http.ResponseWriter, r *http.Request) {
+	health := h.channelRegistry.HealthCheck()
+	anyHealthy := len(health) == 0 // no channels = trivially ready (dev mode)
+	for _, s := range health {
+		if s.Healthy {
+			anyHealthy = true
+			break
+		}
+	}
+	if !anyHealthy {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	statusStr := "not ready"
+	if anyHealthy {
+		statusStr = "ready"
+	}
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": statusStr}); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode ready response")
+	}
+}
+
+// handleDashboardData returns a JSON stats snapshot for the dashboard.
+func (h *HTTPServer) handleDashboardData(w http.ResponseWriter, r *http.Request) {
+	snap := h.stats.Snapshot()
+
+	chans := h.channelRegistry.All()
+	channelInfo := make([]map[string]any, 0, len(chans))
+	for _, ch := range chans {
+		health := ch.Health()
+		channelInfo = append(channelInfo, map[string]any{
+			"name":    ch.Name(),
+			"healthy": health.Healthy,
+			"status":  health.Status,
+		})
+	}
+
+	activeUsers := 0
+	if h.agentRouter != nil {
+		activeUsers = h.agentRouter.ActiveUsers()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"version":         h.version,
+		"uptime_seconds":  snap.UptimeSeconds,
+		"messages_in":     snap.MessagesIn,
+		"messages_out":    snap.MessagesOut,
+		"active_users":    activeUsers,
+		"channels":        channelInfo,
+		"recent_messages": snap.Recent,
+	}); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode dashboard data response")
+	}
+}
+
+// handleUserPreferences handles GET and POST for /users/{user_id}/preferences.
+func (h *HTTPServer) handleUserPreferences(w http.ResponseWriter, r *http.Request) {
+	// Path: /users/{user_id}/preferences
+	path := strings.TrimPrefix(r.URL.Path, "/users/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) != 2 || parts[1] != "preferences" {
+		http.NotFound(w, r)
+		return
+	}
+	userID := parts[0]
+	if userID == "" {
+		http.Error(w, "missing user_id", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		channelID := ""
+		if h.userPrefs != nil {
+			channelID = h.userPrefs.Get(userID)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]string{"preferred_channel_id": channelID}); err != nil {
+			h.logger.Error().Err(err).Msg("failed to encode user preferences response")
+		}
+
+	case http.MethodPost:
+		var body struct {
+			PreferredChannelID string `json:"preferred_channel_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+			return
+		}
+		if h.userPrefs != nil {
+			if body.PreferredChannelID == "" {
+				h.userPrefs.Delete(userID)
+			} else {
+				h.userPrefs.Set(userID, body.PreferredChannelID)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]string{"preferred_channel_id": body.PreferredChannelID}); err != nil {
+			h.logger.Error().Err(err).Msg("failed to encode user preferences response")
+		}
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 // Start starts the HTTP server
 func (h *HTTPServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
-	// Dashboard static files and WebSocket
+	// Dashboard static files and WebSocket — wrapped with optional auth
 	if h.staticFiles != nil {
-		mux.Handle("/", h.staticFiles)
+		mux.Handle("/", h.dashAuthMiddleware(h.staticFiles))
 	}
-	mux.HandleFunc("/api/ws", h.handleDashWS)
+	mux.Handle("/api/ws", h.dashAuthMiddleware(http.HandlerFunc(h.handleDashWS)))
 
-	// Health check endpoint
+	// Health/liveness/readiness probes (no auth required)
 	mux.HandleFunc("/health", h.handleHealth)
+	mux.HandleFunc("/live", h.handleLive)
+	mux.HandleFunc("/ready", h.handleReady)
 
 	// Status endpoint
 	mux.HandleFunc("/status", h.handleStatus)
 
 	// Metrics endpoint
 	mux.Handle("/metrics", promhttp.Handler())
+
+	// Dashboard stats JSON endpoint — protected by optional auth
+	mux.Handle("/dashboard/data", h.dashAuthMiddleware(http.HandlerFunc(h.handleDashboardData)))
+
+	// User preferences API
+	mux.HandleFunc("/users/", h.handleUserPreferences)
+
+	// Programmatically registered extra routes (e.g. test channel)
+	for pattern, handler := range h.extraRoutes {
+		mux.Handle(pattern, handler)
+	}
 
 	h.server = &http.Server{
 		Addr:         fmt.Sprintf(":%d", h.port),

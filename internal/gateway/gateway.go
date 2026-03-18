@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/scttfrdmn/bucktooth/internal/channels"
+	"github.com/scttfrdmn/bucktooth/internal/channels/testchan"
 	"github.com/scttfrdmn/bucktooth/internal/config"
 	"github.com/scttfrdmn/bucktooth/internal/memory"
 	"github.com/scttfrdmn/bucktooth/internal/tools"
@@ -34,6 +38,8 @@ type Gateway struct {
 	memoryStore     memory.Store
 	httpServer      *HTTPServer
 	wsServer        *WebSocketServer
+	stats           *Stats
+	userPrefs       *UserPrefs
 	logger          zerolog.Logger
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -135,12 +141,28 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 		return nil, fmt.Errorf("failed to create agent router: %w", err)
 	}
 
+	// Create stats and user preferences store
+	stats := NewStats()
+	userPrefs := NewUserPrefs()
+
 	// Create channel registry
 	channelRegistry := channels.NewChannelRegistry()
 
 	// Create HTTP server
-	httpServer := NewHTTPServer(cfg.Gateway.HTTPPort, channelRegistry, logger)
+	httpServer := NewHTTPServer(cfg.Gateway.HTTPPort, channelRegistry, agentRouter, stats, logger)
 	httpServer.SetStaticFiles(webFileServer())
+	httpServer.SetDashboardAuth(cfg.Gateway.DashboardAuthPassword)
+	httpServer.SetVersion(readVersionFile())
+	httpServer.SetUserPrefs(userPrefs)
+
+	// Register test channel routes and channel before the gateway struct is created.
+	if cfg.Gateway.TestChannel {
+		tc := testchan.New(logger)
+		channelRegistry.Register(tc)
+		httpServer.Handle("/test/send", http.HandlerFunc(tc.HandleSend))
+		httpServer.Handle("/test/responses", http.HandlerFunc(tc.HandleResponses))
+		logger.Info().Msg("test channel enabled (harness mode)")
+	}
 
 	// Create WebSocket server
 	wsServer := NewWebSocketServer(cfg.Gateway.WebSocketPort, logger)
@@ -153,6 +175,8 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 		memoryStore:     memStore,
 		httpServer:      httpServer,
 		wsServer:        wsServer,
+		stats:           stats,
+		userPrefs:       userPrefs,
 		logger:          logger.With().Str("component", "gateway").Logger(),
 		ctx:             ctx,
 		cancel:          cancel,
@@ -217,6 +241,15 @@ func (g *Gateway) Start() error {
 		}
 	}
 
+	// Start test channel if harness mode is enabled.
+	if g.config.Gateway.TestChannel {
+		if tc, ok := g.channelRegistry.Get("test"); ok {
+			if err := g.startChannel(tc); err != nil {
+				g.logger.Error().Err(err).Str("channel", "test").Msg("failed to start test channel")
+			}
+		}
+	}
+
 	g.logger.Info().Msg("gateway started successfully")
 	return nil
 }
@@ -268,6 +301,12 @@ func (g *Gateway) RegisterChannel(channel channels.Channel) {
 	g.logger.Info().Str("channel", channel.Name()).Msg("channel registered")
 }
 
+// Handle registers an extra HTTP route, delegating to the HTTP server.
+// Must be called before Start().
+func (g *Gateway) Handle(pattern string, handler http.Handler) {
+	g.httpServer.Handle(pattern, handler)
+}
+
 // startChannel starts a channel and begins processing messages
 func (g *Gateway) startChannel(channel channels.Channel) error {
 	g.logger.Info().Str("channel", channel.Name()).Msg("starting channel")
@@ -312,6 +351,15 @@ func (g *Gateway) receiveMessages(channel channels.Channel, msgChan <-chan *chan
 			g.eventBus.Publish(g.ctx, MessageReceivedEvent(msg))
 		}
 	}
+}
+
+// readVersionFile reads the VERSION file from the working directory; returns "dev" on failure.
+func readVersionFile() string {
+	data, err := os.ReadFile("VERSION")
+	if err != nil {
+		return "dev"
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // broadcastToDashboard marshals an event and sends it to all dashboard WS clients.
@@ -361,6 +409,9 @@ func (g *Gateway) handleMessageReceived(ctx context.Context, event Event) {
 		Str("content", msg.Content).
 		Msg("handling message")
 
+	// Record inbound message statistics
+	g.stats.RecordInbound(msg)
+
 	// Publish agent started event
 	g.eventBus.Publish(ctx, AgentStartedEvent(msg))
 
@@ -375,15 +426,19 @@ func (g *Gateway) handleMessageReceived(ctx context.Context, event Event) {
 	// Publish agent completed event
 	g.eventBus.Publish(ctx, AgentCompletedEvent(msg, response))
 
-	// Send response back to the source channel
-	channel, ok := g.channelRegistry.Get(msg.ChannelID)
+	// Resolve target channel — honour user's preferred channel if set
+	targetChannelID := g.userPrefs.Get(msg.UserID)
+	if targetChannelID == "" {
+		targetChannelID = msg.ChannelID
+	}
+	channel, ok := g.channelRegistry.Get(targetChannelID)
 	if !ok {
-		g.logger.Error().Str("channel_id", msg.ChannelID).Msg("channel not found for routing")
+		g.logger.Error().Str("channel_id", targetChannelID).Msg("channel not found for routing")
 		return
 	}
 
 	responseMsg := &channels.Message{
-		ChannelID: msg.ChannelID,
+		ChannelID: targetChannelID,
 		Content:   response,
 		Metadata:  msg.Metadata,
 		Timestamp: time.Now(),
@@ -393,6 +448,9 @@ func (g *Gateway) handleMessageReceived(ctx context.Context, event Event) {
 		g.logger.Error().Err(err).Msg("failed to send response")
 		return
 	}
+
+	// Record outbound message statistics
+	g.stats.RecordOutbound(responseMsg)
 
 	// Publish message sent event
 	g.eventBus.Publish(ctx, MessageSentEvent(responseMsg))

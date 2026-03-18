@@ -99,6 +99,12 @@ docker-compose-up:
 docker-compose-down:
 	docker-compose down -v
 
+## test-harness: Spin up harness container, run integration tests, tear down
+test-harness:
+	docker-compose -f docker-compose.harness.yml up -d --wait
+	GATEWAY_URL=http://localhost:8080 go test -v -tags=integration ./harness/...
+	docker-compose -f docker-compose.harness.yml down
+
 ## check: Run all checks (fmt, vet, lint, test)
 check: fmt vet lint test
 	@echo "All checks passed!"

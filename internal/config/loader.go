@@ -60,6 +60,12 @@ func applyEnvOverrides(cfg *Config) {
 	if model := os.Getenv("LOBSTER_LLM_MODEL"); model != "" {
 		cfg.Agents.LLMModel = model
 	}
+	if v := os.Getenv("ANTHROPIC_API_BASE"); v != "" {
+		cfg.Agents.APIBase = v
+	}
+	if v := os.Getenv("DASHBOARD_AUTH_PASSWORD"); v != "" {
+		cfg.Gateway.DashboardAuthPassword = v
+	}
 
 	// Channel-specific overrides
 	if token := os.Getenv("DISCORD_BOT_TOKEN"); token != "" {

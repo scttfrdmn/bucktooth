@@ -16,11 +16,11 @@ import (
 // back to a direct LLM completion for free-form steps.
 type ToolStepExecutor struct {
 	registry *tools.Registry
-	llm      *llm.AnthropicLLM
+	llm      llm.LLM
 }
 
 // NewToolStepExecutor creates a new ToolStepExecutor.
-func NewToolStepExecutor(registry *tools.Registry, llmClient *llm.AnthropicLLM) *ToolStepExecutor {
+func NewToolStepExecutor(registry *tools.Registry, llmClient llm.LLM) *ToolStepExecutor {
 	return &ToolStepExecutor{
 		registry: registry,
 		llm:      llmClient,

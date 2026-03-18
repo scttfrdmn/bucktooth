@@ -1,0 +1,14 @@
+services:
+  bucktooth:
+    build:
+      context: .
+      dockerfile: Dockerfile.harness
+    command: ["start", "--config", "configs/harness.yaml"]
+    ports:
+      - "8080:8080"
+      - "18789:18789"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

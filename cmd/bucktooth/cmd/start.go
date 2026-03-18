@@ -65,6 +65,10 @@ func runStart(cmd *cobra.Command, args []string) error {
 		Int("max_history", cfg.Agents.MaxHistory).
 		Msg("agent configuration")
 
+	if cfg.Gateway.TestChannel {
+		logger.Info().Msg("harness mode: test_channel enabled, stub LLM active")
+	}
+
 	// Initialise OpenTelemetry tracing
 	tracerShutdown, err := observability.InitTracer(cfg.Observability.Tracing)
 	if err != nil {

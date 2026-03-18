@@ -2,7 +2,7 @@ module github.com/scttfrdmn/bucktooth
 
 go 1.25.0
 
-replace github.com/scttfrdmn/agenkit/agenkit-go => ../../agenkit/agenkit-go
+replace github.com/scttfrdmn/agenkit/agenkit-go => ../agenkit/agenkit-go
 
 require (
 	github.com/bwmarrin/discordgo v0.28.1
