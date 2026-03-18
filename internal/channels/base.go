@@ -9,14 +9,14 @@ import (
 
 // BaseChannel provides common functionality for all channels
 type BaseChannel struct {
-	name          string
-	logger        zerolog.Logger
-	healthStatus  HealthStatus
-	healthMu      sync.RWMutex
-	messageQueue  chan *Message
-	queueSize     int
-	connected     bool
-	connectedMu   sync.RWMutex
+	name         string
+	logger       zerolog.Logger
+	healthStatus HealthStatus
+	healthMu     sync.RWMutex
+	messageQueue chan *Message
+	queueSize    int
+	connected    bool
+	connectedMu  sync.RWMutex
 }
 
 // NewBaseChannel creates a new base channel
@@ -109,8 +109,8 @@ func (b *BaseChannel) Close() {
 
 // Common errors
 var (
-	ErrQueueFull      = &ChannelError{Code: "QUEUE_FULL", Message: "message queue is full"}
-	ErrNotConnected   = &ChannelError{Code: "NOT_CONNECTED", Message: "channel is not connected"}
+	ErrQueueFull        = &ChannelError{Code: "QUEUE_FULL", Message: "message queue is full"}
+	ErrNotConnected     = &ChannelError{Code: "NOT_CONNECTED", Message: "channel is not connected"}
 	ErrAlreadyConnected = &ChannelError{Code: "ALREADY_CONNECTED", Message: "channel is already connected"}
 )
 

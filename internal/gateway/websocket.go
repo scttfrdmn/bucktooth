@@ -68,7 +68,9 @@ func (ws *WebSocketServer) Start(ctx context.Context) error {
 		// Close all client connections
 		ws.clientMu.Lock()
 		for conn := range ws.clients {
-			conn.Close()
+			if err := conn.Close(); err != nil {
+				ws.logger.Debug().Err(err).Msg("ws client close error")
+			}
 		}
 		ws.clientMu.Unlock()
 
@@ -98,7 +100,9 @@ func (ws *WebSocketServer) handleWebSocket(w http.ResponseWriter, r *http.Reques
 		ws.clientMu.Lock()
 		delete(ws.clients, conn)
 		ws.clientMu.Unlock()
-		conn.Close()
+		if err := conn.Close(); err != nil {
+			ws.logger.Debug().Err(err).Msg("ws client close error")
+		}
 		ws.logger.Info().Str("remote_addr", r.RemoteAddr).Msg("client disconnected")
 	}()
 

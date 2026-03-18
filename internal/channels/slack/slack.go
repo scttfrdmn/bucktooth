@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/scttfrdmn/bucktooth/internal/channels"
+	"github.com/scttfrdmn/bucktooth/internal/config"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
-	"github.com/scttfrdmn/bucktooth/internal/channels"
-	"github.com/scttfrdmn/bucktooth/internal/config"
 )
 
 // SlackChannel implements the Channel interface for Slack via Socket Mode.

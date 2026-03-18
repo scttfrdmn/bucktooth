@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-03-17
+
+### Changed
+- Replace all `interface{}` with `any` throughout the codebase (Go 1.18+ idiom)
+- `internal/config/loader.go`: replace `fmt.Sscanf` with `strconv.Atoi` for env-var port parsing; errors now silently ignored rather than silently wrong
+- `internal/gateway/http.go`: check and log errors from `json.Encoder.Encode` in `/health` and `/status` handlers
+- `internal/gateway/http.go`, `internal/gateway/websocket.go`: check and log errors from `conn.Close()` in shutdown paths and defer blocks
+- `internal/tools/websearch.go`: lowercase error string per Go convention (`ST1005`)
+- `cmd/bucktooth/cmd/start.go`: lowercase error string per Go convention (`ST1005`)
+- `defer resp.Body.Close()` wrapped as `defer func() { _ = resp.Body.Close() }()` to satisfy errcheck
+- `internal/tools/websearch_test.go`: check error from `json.Encoder.Encode` in mock HTTP handler
+- Remove unused `mockLLMClient` type from `internal/agents/planning_test.go`
+- Apply `gofmt` to 11 files with import-grouping and struct-alignment drift
+
 ## [0.4.0] - 2026-03-17
 
 ### Added
@@ -94,7 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent processing overhead: ~2ms
 - Target throughput: 1,000 messages/second (Phase 4 goal)
 
-[unreleased]: https://github.com/scttfrdmn/bucktooth/compare/v0.4.0...HEAD
+[unreleased]: https://github.com/scttfrdmn/bucktooth/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/scttfrdmn/bucktooth/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/scttfrdmn/bucktooth/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/scttfrdmn/bucktooth/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/scttfrdmn/bucktooth/compare/v0.1.0...v0.2.0

@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 	"github.com/scttfrdmn/bucktooth/internal/channels"
 	"github.com/scttfrdmn/bucktooth/internal/config"
 	"github.com/scttfrdmn/bucktooth/internal/memory"
 	"github.com/scttfrdmn/bucktooth/internal/tools"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // dashboardEvent is the wire struct sent to dashboard WebSocket clients.

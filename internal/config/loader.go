@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -39,10 +40,14 @@ func Load(path string) (*Config, error) {
 func applyEnvOverrides(cfg *Config) {
 	// Gateway overrides
 	if port := os.Getenv("LOBSTER_GATEWAY_PORT"); port != "" {
-		fmt.Sscanf(port, "%d", &cfg.Gateway.HTTPPort)
+		if v, err := strconv.Atoi(port); err == nil {
+			cfg.Gateway.HTTPPort = v
+		}
 	}
 	if wsPort := os.Getenv("LOBSTER_WEBSOCKET_PORT"); wsPort != "" {
-		fmt.Sscanf(wsPort, "%d", &cfg.Gateway.WebSocketPort)
+		if v, err := strconv.Atoi(wsPort); err == nil {
+			cfg.Gateway.WebSocketPort = v
+		}
 	}
 	if logLevel := os.Getenv("LOBSTER_LOG_LEVEL"); logLevel != "" {
 		cfg.Gateway.LogLevel = logLevel
@@ -60,7 +65,7 @@ func applyEnvOverrides(cfg *Config) {
 	if token := os.Getenv("DISCORD_BOT_TOKEN"); token != "" {
 		if cfg.Channels["discord"].Auth == nil {
 			discordCfg := cfg.Channels["discord"]
-			discordCfg.Auth = make(map[string]interface{})
+			discordCfg.Auth = make(map[string]any)
 			cfg.Channels["discord"] = discordCfg
 		}
 		cfg.Channels["discord"].Auth["token"] = token

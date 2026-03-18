@@ -86,7 +86,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	if cfg.Channels["discord"].Enabled {
 		discordToken, ok := cfg.Channels["discord"].Auth["token"].(string)
 		if !ok || discordToken == "" {
-			return fmt.Errorf("Discord token is required when Discord channel is enabled")
+			return fmt.Errorf("discord token is required when discord channel is enabled")
 		}
 
 		discordChannel, err := discord.NewDiscordChannel(discordToken, logger)

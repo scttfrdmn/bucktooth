@@ -40,7 +40,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("could not reach gateway at %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -48,7 +48,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Pretty-print JSON
-	var pretty interface{}
+	var pretty any
 	if err := json.Unmarshal(body, &pretty); err == nil {
 		out, _ := json.MarshalIndent(pretty, "", "  ")
 		fmt.Println(string(out))

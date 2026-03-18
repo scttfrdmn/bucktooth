@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/scttfrdmn/bucktooth/internal/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
-	"github.com/scttfrdmn/bucktooth/internal/config"
 )
 
 // InitTracer initialises the OpenTelemetry tracer provider.

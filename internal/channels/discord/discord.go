@@ -146,9 +146,9 @@ func (d *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 		Username:  m.Author.Username,
 		Content:   m.Content,
 		Timestamp: time.Now(),
-		Metadata: map[string]interface{}{
-			"discord_channel_id": m.ChannelID,
-			"discord_guild_id":   m.GuildID,
+		Metadata: map[string]any{
+			"discord_channel_id":           m.ChannelID,
+			"discord_guild_id":             m.GuildID,
 			"discord_author_discriminator": m.Author.Discriminator,
 		},
 		Attachments: make([]channels.Attachment, 0, len(m.Attachments)),

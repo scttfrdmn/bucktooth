@@ -11,7 +11,7 @@ import (
 func TestWebSearchTool_NoAPIKey(t *testing.T) {
 	tool := NewWebSearchTool("", 5)
 
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
+	result, err := tool.Execute(context.Background(), map[string]any{
 		"query": "golang testing",
 	})
 	if err != nil {
@@ -25,7 +25,7 @@ func TestWebSearchTool_NoAPIKey(t *testing.T) {
 func TestWebSearchTool_MissingQuery(t *testing.T) {
 	tool := NewWebSearchTool("some-key", 5)
 
-	result, err := tool.Execute(context.Background(), map[string]interface{}{})
+	result, err := tool.Execute(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -36,9 +36,9 @@ func TestWebSearchTool_MissingQuery(t *testing.T) {
 
 func TestWebSearchTool_Success(t *testing.T) {
 	// Start a local mock server that returns a minimal Brave Search response.
-	mockResp := map[string]interface{}{
-		"web": map[string]interface{}{
-			"results": []map[string]interface{}{
+	mockResp := map[string]any{
+		"web": map[string]any{
+			"results": []map[string]any{
 				{
 					"title":       "Go Testing",
 					"url":         "https://pkg.go.dev/testing",
@@ -50,7 +50,9 @@ func TestWebSearchTool_Success(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockResp)
+		if err := json.NewEncoder(w).Encode(mockResp); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	}))
 	defer ts.Close()
 
@@ -65,7 +67,7 @@ func TestWebSearchTool_Success(t *testing.T) {
 	// Instead, test via Execute using a slightly different approach: we swap the client.
 	// The actual URL is hardcoded in search(), so test with the real method signature.
 	// Here we test that Execute parses JSON input correctly.
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
+	result, err := tool.Execute(context.Background(), map[string]any{
 		"input": `{"query":"golang testing","max_results":1}`,
 	})
 	// The request will fail because it hits the real Brave API — that's OK for this test;
@@ -79,7 +81,7 @@ func TestWebSearchTool_JSONInputParsing(t *testing.T) {
 	// Verify that {"input": "<json>"} wrapper is parsed.
 	tool := NewWebSearchTool("", 5)
 
-	result, err := tool.Execute(context.Background(), map[string]interface{}{
+	result, err := tool.Execute(context.Background(), map[string]any{
 		"input": `{"query":"test"}`,
 	})
 	if err != nil {

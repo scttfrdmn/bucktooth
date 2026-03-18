@@ -56,10 +56,10 @@ func (t *CalendarTool) Description() string {
 }
 
 // Execute dispatches to list, create, or delete based on the "operation" parameter.
-func (t *CalendarTool) Execute(ctx context.Context, params map[string]interface{}) (*agenkit.ToolResult, error) {
+func (t *CalendarTool) Execute(ctx context.Context, params map[string]any) (*agenkit.ToolResult, error) {
 	// Support ReActAgent wrapping params in {"input": "<json string>"}
 	if raw, ok := params["input"].(string); ok {
-		var decoded map[string]interface{}
+		var decoded map[string]any
 		if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
 			params = decoded
 		}
@@ -93,7 +93,7 @@ func (t *CalendarTool) list() (*agenkit.ToolResult, error) {
 	return agenkit.NewToolResult(events), nil
 }
 
-func (t *CalendarTool) create(params map[string]interface{}) (*agenkit.ToolResult, error) {
+func (t *CalendarTool) create(params map[string]any) (*agenkit.ToolResult, error) {
 	title, _ := params["title"].(string)
 	if title == "" {
 		return agenkit.NewToolError("create requires a non-empty title"), nil
@@ -140,7 +140,7 @@ func (t *CalendarTool) create(params map[string]interface{}) (*agenkit.ToolResul
 	return agenkit.NewToolResult(event), nil
 }
 
-func (t *CalendarTool) delete(params map[string]interface{}) (*agenkit.ToolResult, error) {
+func (t *CalendarTool) delete(params map[string]any) (*agenkit.ToolResult, error) {
 	id, _ := params["id"].(string)
 	if id == "" {
 		return agenkit.NewToolError("delete requires an event id"), nil
@@ -170,8 +170,8 @@ func (t *CalendarTool) delete(params map[string]interface{}) (*agenkit.ToolResul
 	}
 
 	return agenkit.NewToolResult(map[string]string{
-		"status":  "deleted",
-		"id":      id,
+		"status": "deleted",
+		"id":     id,
 	}), nil
 }
 

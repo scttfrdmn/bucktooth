@@ -12,13 +12,13 @@ import (
 type EventType string
 
 const (
-	EventTypeMessageReceived EventType = "message.received"
-	EventTypeMessageSent     EventType = "message.sent"
-	EventTypeChannelConnected EventType = "channel.connected"
+	EventTypeMessageReceived     EventType = "message.received"
+	EventTypeMessageSent         EventType = "message.sent"
+	EventTypeChannelConnected    EventType = "channel.connected"
 	EventTypeChannelDisconnected EventType = "channel.disconnected"
-	EventTypeAgentStarted    EventType = "agent.started"
-	EventTypeAgentCompleted  EventType = "agent.completed"
-	EventTypeAgentError      EventType = "agent.error"
+	EventTypeAgentStarted        EventType = "agent.started"
+	EventTypeAgentCompleted      EventType = "agent.completed"
+	EventTypeAgentError          EventType = "agent.error"
 )
 
 // Event represents an event in the system
@@ -26,7 +26,7 @@ type Event struct {
 	Type      EventType
 	ChannelID string
 	Message   *channels.Message
-	Data      map[string]interface{}
+	Data      map[string]any
 }
 
 // EventHandler is a function that handles events
@@ -117,7 +117,7 @@ func ChannelConnectedEvent(channelName string) Event {
 	return Event{
 		Type:      EventTypeChannelConnected,
 		ChannelID: channelName,
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"channel": channelName,
 		},
 	}
@@ -128,7 +128,7 @@ func ChannelDisconnectedEvent(channelName string) Event {
 	return Event{
 		Type:      EventTypeChannelDisconnected,
 		ChannelID: channelName,
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"channel": channelName,
 		},
 	}
@@ -149,7 +149,7 @@ func AgentCompletedEvent(msg *channels.Message, response string) Event {
 		Type:      EventTypeAgentCompleted,
 		ChannelID: msg.ChannelID,
 		Message:   msg,
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"response": response,
 		},
 	}
@@ -161,7 +161,7 @@ func AgentErrorEvent(msg *channels.Message, err error) Event {
 		Type:      EventTypeAgentError,
 		ChannelID: msg.ChannelID,
 		Message:   msg,
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"error": err.Error(),
 		},
 	}

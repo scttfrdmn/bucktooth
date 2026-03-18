@@ -39,15 +39,15 @@ func (t *WebSearchTool) Description() string {
 }
 
 // Execute performs a web search and returns the top results.
-func (t *WebSearchTool) Execute(ctx context.Context, params map[string]interface{}) (*agenkit.ToolResult, error) {
+func (t *WebSearchTool) Execute(ctx context.Context, params map[string]any) (*agenkit.ToolResult, error) {
 	// Support ReActAgent wrapping params in {"input": "<json string>"}
 	if raw, ok := params["input"].(string); ok {
-		var decoded map[string]interface{}
+		var decoded map[string]any
 		if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
 			params = decoded
 		} else {
 			// Treat raw string as the query directly.
-			params = map[string]interface{}{"query": raw}
+			params = map[string]any{"query": raw}
 		}
 	}
 
@@ -104,11 +104,11 @@ func (t *WebSearchTool) search(ctx context.Context, query string, maxResults int
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("Brave Search API returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("brave search API returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	var searchResp braveSearchResponse

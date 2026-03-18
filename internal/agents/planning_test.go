@@ -8,15 +8,6 @@ import (
 	"github.com/scttfrdmn/bucktooth/internal/tools"
 )
 
-// mockLLMClient is a minimal patterns.LLMClient for testing.
-type mockLLMClient struct {
-	response string
-}
-
-func (m *mockLLMClient) Chat(ctx context.Context, messages interface{}) (interface{}, error) {
-	return m.response, nil
-}
-
 func TestToolStepExecutor_FallsBackToLLM(t *testing.T) {
 	// With no registry the executor should not panic.
 	executor := NewToolStepExecutor(nil, nil)

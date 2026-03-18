@@ -22,8 +22,8 @@ type ToolStepExecutor struct {
 // NewToolStepExecutor creates a new ToolStepExecutor.
 func NewToolStepExecutor(registry *tools.Registry, llmClient *llm.AnthropicLLM) *ToolStepExecutor {
 	return &ToolStepExecutor{
-		registry:  registry,
-		llm:       llmClient,
+		registry: registry,
+		llm:      llmClient,
 	}
 }
 
@@ -32,11 +32,11 @@ func NewToolStepExecutor(registry *tools.Registry, llmClient *llm.AnthropicLLM) 
 // It first checks whether any registered tool name appears in the step description;
 // if so it invokes that tool with the step description as input. Otherwise it calls
 // the LLM to handle the step as a free-form completion.
-func (e *ToolStepExecutor) Execute(ctx context.Context, step patterns.PlanStep, stepContext map[string]interface{}) (interface{}, error) {
+func (e *ToolStepExecutor) Execute(ctx context.Context, step patterns.PlanStep, stepContext map[string]any) (any, error) {
 	if e.registry != nil {
 		for _, tool := range e.registry.GetAll() {
 			if strings.Contains(strings.ToLower(step.Description), strings.ToLower(tool.Name())) {
-				result, err := tool.Execute(ctx, map[string]interface{}{
+				result, err := tool.Execute(ctx, map[string]any{
 					"input": step.Description,
 				})
 				if err != nil {
@@ -71,7 +71,7 @@ func (e *ToolStepExecutor) Execute(ctx context.Context, step patterns.PlanStep, 
 }
 
 // buildContextSummary converts the step context map to a readable string.
-func buildContextSummary(ctx map[string]interface{}) string {
+func buildContextSummary(ctx map[string]any) string {
 	if len(ctx) == 0 {
 		return ""
 	}

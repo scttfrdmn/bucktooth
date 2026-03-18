@@ -6,27 +6,27 @@ import (
 
 // Config represents the entire application configuration
 type Config struct {
-	Gateway  GatewayConfig            `yaml:"gateway"`
-	Channels map[string]ChannelConfig `yaml:"channels"`
-	Agents   AgentConfig              `yaml:"agents"`
-	Tools    ToolsConfig              `yaml:"tools"`
-	Memory   MemoryConfig             `yaml:"memory"`
-	Observability ObservabilityConfig  `yaml:"observability"`
+	Gateway       GatewayConfig            `yaml:"gateway"`
+	Channels      map[string]ChannelConfig `yaml:"channels"`
+	Agents        AgentConfig              `yaml:"agents"`
+	Tools         ToolsConfig              `yaml:"tools"`
+	Memory        MemoryConfig             `yaml:"memory"`
+	Observability ObservabilityConfig      `yaml:"observability"`
 }
 
 // GatewayConfig configures the gateway server
 type GatewayConfig struct {
-	WebSocketPort int           `yaml:"websocket_port"`
-	HTTPPort      int           `yaml:"http_port"`
-	LogLevel      string        `yaml:"log_level"`
+	WebSocketPort   int           `yaml:"websocket_port"`
+	HTTPPort        int           `yaml:"http_port"`
+	LogLevel        string        `yaml:"log_level"`
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
 }
 
 // ChannelConfig configures a messaging channel
 type ChannelConfig struct {
-	Enabled bool                   `yaml:"enabled"`
-	Auth    map[string]interface{} `yaml:"auth"`
-	Options map[string]interface{} `yaml:"options"`
+	Enabled bool           `yaml:"enabled"`
+	Auth    map[string]any `yaml:"auth"`
+	Options map[string]any `yaml:"options"`
 }
 
 // AgentConfig configures AI agents
@@ -52,14 +52,14 @@ type ToolsConfig struct {
 
 // ToolConfig configures a specific tool
 type ToolConfig struct {
-	Enabled bool                   `yaml:"enabled"`
-	Options map[string]interface{} `yaml:"options"`
+	Enabled bool           `yaml:"enabled"`
+	Options map[string]any `yaml:"options"`
 }
 
 // MemoryConfig configures memory storage
 type MemoryConfig struct {
-	Type    string                 `yaml:"type"` // "inmemory" or "redis"
-	Options map[string]interface{} `yaml:"options"`
+	Type    string         `yaml:"type"` // "inmemory" or "redis"
+	Options map[string]any `yaml:"options"`
 }
 
 // ObservabilityConfig configures metrics and tracing
@@ -77,10 +77,10 @@ type MetricsConfig struct {
 
 // TracingConfig configures OpenTelemetry tracing
 type TracingConfig struct {
-	Enabled      bool    `yaml:"enabled"`
-	Endpoint     string  `yaml:"endpoint"`
-	SampleRate   float64 `yaml:"sample_rate"`
-	ServiceName  string  `yaml:"service_name"`
+	Enabled     bool    `yaml:"enabled"`
+	Endpoint    string  `yaml:"endpoint"`
+	SampleRate  float64 `yaml:"sample_rate"`
+	ServiceName string  `yaml:"service_name"`
 }
 
 // DefaultConfig returns a default configuration
@@ -105,8 +105,8 @@ func DefaultConfig() *Config {
 			Message:    ToolConfig{Enabled: true},
 			FileSystem: ToolConfig{
 				Enabled: true,
-				Options: map[string]interface{}{
-					"sandbox_dir": "~/bucktooth-files",
+				Options: map[string]any{
+					"sandbox_dir":   "~/bucktooth-files",
 					"max_file_size": 10485760, // 10MB
 				},
 			},

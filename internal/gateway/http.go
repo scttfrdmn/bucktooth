@@ -34,7 +34,7 @@ func NewHTTPServer(port int, registry *channels.ChannelRegistry, logger zerolog.
 		port:            port,
 		channelRegistry: registry,
 		logger:          logger.With().Str("component", "http").Logger(),
-		dashClients: make(map[*websocket.Conn]bool),
+		dashClients:     make(map[*websocket.Conn]bool),
 		dashUpgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -76,7 +76,9 @@ func (h *HTTPServer) handleDashWS(w http.ResponseWriter, r *http.Request) {
 		h.dashMu.Lock()
 		delete(h.dashClients, conn)
 		h.dashMu.Unlock()
-		conn.Close()
+		if err := conn.Close(); err != nil {
+			h.logger.Debug().Err(err).Msg("dashboard ws close error")
+		}
 		h.logger.Debug().Str("remote", r.RemoteAddr).Msg("dashboard client disconnected")
 	}()
 
@@ -135,7 +137,9 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 		// Close dashboard clients
 		h.dashMu.Lock()
 		for conn := range h.dashClients {
-			conn.Close()
+			if err := conn.Close(); err != nil {
+				h.logger.Debug().Err(err).Msg("dashboard ws shutdown close error")
+			}
 		}
 		h.dashMu.Unlock()
 
@@ -164,20 +168,22 @@ func (h *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"status":   getStatusString(allHealthy),
 		"channels": health,
-	})
+	}); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode health response")
+	}
 }
 
 // handleStatus handles status requests
 func (h *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	channels := h.channelRegistry.All()
-	channelInfo := make([]map[string]interface{}, 0, len(channels))
+	channelInfo := make([]map[string]any, 0, len(channels))
 
 	for _, ch := range channels {
 		health := ch.Health()
-		channelInfo = append(channelInfo, map[string]interface{}{
+		channelInfo = append(channelInfo, map[string]any{
 			"name":    ch.Name(),
 			"healthy": health.Healthy,
 			"status":  health.Status,
@@ -185,10 +191,12 @@ func (h *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"status":   "running",
 		"channels": channelInfo,
-	})
+	}); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode status response")
+	}
 }
 
 // loggingMiddleware logs HTTP requests

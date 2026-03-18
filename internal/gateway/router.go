@@ -5,15 +5,15 @@ import (
 	"fmt"
 
 	"github.com/rs/zerolog"
-	"github.com/scttfrdmn/agenkit/agenkit-go/agenkit"
 	"github.com/scttfrdmn/agenkit/agenkit-go/adapter/llm"
+	"github.com/scttfrdmn/agenkit/agenkit-go/agenkit"
 	"github.com/scttfrdmn/agenkit/agenkit-go/patterns"
-	"go.opentelemetry.io/otel"
 	"github.com/scttfrdmn/bucktooth/internal/agents"
 	"github.com/scttfrdmn/bucktooth/internal/channels"
 	"github.com/scttfrdmn/bucktooth/internal/config"
 	"github.com/scttfrdmn/bucktooth/internal/memory"
 	"github.com/scttfrdmn/bucktooth/internal/tools"
+	"go.opentelemetry.io/otel"
 )
 
 const systemPrompt = "You are a helpful AI assistant. You are friendly, concise, and helpful."
@@ -42,7 +42,7 @@ type llmAgent struct {
 	llm *llm.AnthropicLLM
 }
 
-func (a *llmAgent) Name() string         { return "LLMAgent" }
+func (a *llmAgent) Name() string           { return "LLMAgent" }
 func (a *llmAgent) Capabilities() []string { return []string{"llm"} }
 func (a *llmAgent) Introspect() *agenkit.IntrospectionResult {
 	return &agenkit.IntrospectionResult{AgentName: "LLMAgent", Capabilities: a.Capabilities()}
