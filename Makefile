@@ -1,9 +1,9 @@
 .PHONY: build run test clean install deps fmt lint help
 
 # Build variables
-BINARY_NAME=BuckTooth
+BINARY_NAME=bucktooth
 BUILD_DIR=bin
-MAIN_PATH=./cmd/gateway
+MAIN_PATH=./cmd/bucktooth
 GO=go
 
 # Default target
@@ -29,7 +29,7 @@ run:
 
 ## run-debug: Run with debug logging
 run-debug:
-	$(GO) run $(MAIN_PATH) --log-level debug
+	$(GO) run $(MAIN_PATH) start --log-level debug
 
 ## test: Run all tests
 test:
@@ -47,7 +47,7 @@ test-race:
 
 ## bench: Run benchmarks
 bench:
-	$(GO) test -bench=. -benchmem ./...
+	$(GO) test -bench=. -benchmem -benchtime=5s ./bench/...
 
 ## deps: Download dependencies
 deps:
@@ -90,6 +90,14 @@ docker-build:
 ## docker-run: Run Docker container
 docker-run:
 	docker run -p 8080:8080 -p 18789:18789 --env-file .env $(BINARY_NAME):latest
+
+## docker-compose-up: Start all services with docker-compose
+docker-compose-up:
+	docker-compose up -d
+
+## docker-compose-down: Stop all services and remove volumes
+docker-compose-down:
+	docker-compose down -v
 
 ## check: Run all checks (fmt, vet, lint, test)
 check: fmt vet lint test

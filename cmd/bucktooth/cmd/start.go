@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package cmd
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -31,30 +30,28 @@ import (
 	"github.com/scttfrdmn/bucktooth/internal/config"
 	"github.com/scttfrdmn/bucktooth/internal/gateway"
 	"github.com/scttfrdmn/bucktooth/internal/observability"
+	"github.com/spf13/cobra"
 )
 
-var (
-	configPath = flag.String("config", "", "path to configuration file")
-	logLevel   = flag.String("log-level", "", "log level (debug, info, warn, error)")
-	port       = flag.Int("port", 0, "HTTP port (overrides config)")
-)
+var startCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start the BuckTooth gateway",
+	RunE:  runStart,
+}
 
-func main() {
-	flag.Parse()
-
+func runStart(cmd *cobra.Command, args []string) error {
 	// Load configuration
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.Load(cfgFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	// Override with CLI flags
-	if *logLevel != "" {
-		cfg.Gateway.LogLevel = *logLevel
+	if logLevel != "" {
+		cfg.Gateway.LogLevel = logLevel
 	}
-	if *port > 0 {
-		cfg.Gateway.HTTPPort = *port
+	if port > 0 {
+		cfg.Gateway.HTTPPort = port
 	}
 
 	// Setup logging
@@ -68,11 +65,10 @@ func main() {
 		Int("max_history", cfg.Agents.MaxHistory).
 		Msg("agent configuration")
 
-	// Initialise OpenTelemetry tracing.
+	// Initialise OpenTelemetry tracing
 	tracerShutdown, err := observability.InitTracer(cfg.Observability.Tracing)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialise tracer: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to initialise tracer: %w", err)
 	}
 	defer func() {
 		if err := tracerShutdown(context.Background()); err != nil {
@@ -83,20 +79,19 @@ func main() {
 	// Create gateway
 	gw, err := gateway.New(cfg, logger)
 	if err != nil {
-		logger.Fatal().Err(err).Msg("failed to create gateway")
+		return fmt.Errorf("failed to create gateway: %w", err)
 	}
 
 	// Register enabled channels
-
 	if cfg.Channels["discord"].Enabled {
 		discordToken, ok := cfg.Channels["discord"].Auth["token"].(string)
 		if !ok || discordToken == "" {
-			logger.Fatal().Msg("Discord token is required when Discord channel is enabled")
+			return fmt.Errorf("Discord token is required when Discord channel is enabled")
 		}
 
 		discordChannel, err := discord.NewDiscordChannel(discordToken, logger)
 		if err != nil {
-			logger.Fatal().Err(err).Msg("failed to create Discord channel")
+			return fmt.Errorf("failed to create Discord channel: %w", err)
 		}
 
 		gw.RegisterChannel(discordChannel)
@@ -106,7 +101,7 @@ func main() {
 	if cfg.Channels["whatsapp"].Enabled {
 		whatsappChannel, err := whatsapp.NewWhatsAppChannel(cfg.Channels["whatsapp"], logger)
 		if err != nil {
-			logger.Fatal().Err(err).Msg("failed to create WhatsApp channel")
+			return fmt.Errorf("failed to create WhatsApp channel: %w", err)
 		}
 
 		gw.RegisterChannel(whatsappChannel)
@@ -116,7 +111,7 @@ func main() {
 	if cfg.Channels["telegram"].Enabled {
 		telegramChannel, err := telegramchan.NewTelegramChannel(cfg.Channels["telegram"], logger)
 		if err != nil {
-			logger.Fatal().Err(err).Msg("failed to create Telegram channel")
+			return fmt.Errorf("failed to create Telegram channel: %w", err)
 		}
 
 		gw.RegisterChannel(telegramChannel)
@@ -126,7 +121,7 @@ func main() {
 	if cfg.Channels["slack"].Enabled {
 		slackChannel, err := slackchan.NewSlackChannel(cfg.Channels["slack"], logger)
 		if err != nil {
-			logger.Fatal().Err(err).Msg("failed to create Slack channel")
+			return fmt.Errorf("failed to create Slack channel: %w", err)
 		}
 
 		gw.RegisterChannel(slackChannel)
@@ -135,7 +130,7 @@ func main() {
 
 	// Start gateway
 	if err := gw.Start(); err != nil {
-		logger.Fatal().Err(err).Msg("failed to start gateway")
+		return fmt.Errorf("failed to start gateway: %w", err)
 	}
 
 	// Wait for interrupt signal
@@ -148,30 +143,28 @@ func main() {
 	// Stop gateway
 	if err := gw.Stop(); err != nil {
 		logger.Error().Err(err).Msg("error during shutdown")
-		os.Exit(1)
+		return err
 	}
 
 	logger.Info().Msg("shutdown complete")
+	return nil
 }
 
 func setupLogging(level string) zerolog.Logger {
-	// Parse log level
-	logLevel, err := zerolog.ParseLevel(level)
+	lvl, err := zerolog.ParseLevel(level)
 	if err != nil {
-		logLevel = zerolog.InfoLevel
+		lvl = zerolog.InfoLevel
 	}
 
-	zerolog.SetGlobalLevel(logLevel)
+	zerolog.SetGlobalLevel(lvl)
 
-	// Configure logger
 	logger := zerolog.New(os.Stdout).
 		With().
 		Timestamp().
 		Caller().
 		Logger()
 
-	// Use pretty logging in development
-	if logLevel == zerolog.DebugLevel {
+	if lvl == zerolog.DebugLevel {
 		logger = logger.Output(zerolog.ConsoleWriter{Out: os.Stdout})
 	}
 
