@@ -46,6 +46,9 @@ type Gateway struct {
 	userPrefs       *UserPrefs
 	scheduler       *cronsched.Scheduler
 	mcpClients      []mcp.MCPClient
+	chunker         *Chunker
+	deduplicator    *Deduplicator
+	formatter       ResponseFormatter
 	logger          zerolog.Logger
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -159,7 +162,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 	stats := NewStats()
 
 	// Create agent router
-	agentRouter, llmInstance, err := NewAgentRouter(cfg.Agents, cfg.Skills, memStore, toolRegistry, stats, logger)
+	agentRouter, llmInstance, err := NewAgentRouter(cfg.Agents, cfg.Gateway, cfg.Skills, memStore, toolRegistry, stats, logger)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create agent router: %w", err)
@@ -223,6 +226,24 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 	// Create WebSocket server
 	wsServer := NewWebSocketServer(cfg.Gateway.WebSocketPort, cfg.Gateway.AllowedWSOrigins, agentRouter, logger)
 
+	// Create chunker (enabled by default).
+	var chunker *Chunker
+	if cfg.Gateway.ChunkingEnabled {
+		chunker = NewChunker(cfg.Gateway.ChunkingLimits)
+		logger.Info().Msg("message chunker enabled")
+	}
+
+	// Create deduplicator (enabled by default).
+	var deduplicator *Deduplicator
+	if cfg.Gateway.DedupEnabled {
+		size := cfg.Gateway.DedupWindowSize
+		if size <= 0 {
+			size = 256
+		}
+		deduplicator = NewDeduplicator(size)
+		logger.Info().Int("window_size", size).Msg("message deduplicator enabled")
+	}
+
 	g := &Gateway{
 		config:          cfg,
 		channelRegistry: channelRegistry,
@@ -235,6 +256,9 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 		userPrefs:       userPrefs,
 		scheduler:       scheduler,
 		mcpClients:      mcpClients,
+		chunker:         chunker,
+		deduplicator:    deduplicator,
+		formatter:       ResponseFormatter{},
 		logger:          logger.With().Str("component", "gateway").Logger(),
 		ctx:             ctx,
 		cancel:          cancel,
@@ -534,6 +558,15 @@ func (g *Gateway) handleMessageReceived(ctx context.Context, event Event) {
 		Str("content", msg.Content).
 		Msg("handling message")
 
+	// Deduplication check — drop duplicate messages before processing.
+	if g.deduplicator != nil && g.deduplicator.Seen(msg) {
+		g.logger.Debug().
+			Str("channel", msg.ChannelID).
+			Str("user", msg.UserID).
+			Msg("duplicate message dropped")
+		return
+	}
+
 	// Record inbound message statistics
 	g.stats.RecordInbound(msg)
 
@@ -562,21 +595,42 @@ func (g *Gateway) handleMessageReceived(ctx context.Context, event Event) {
 		return
 	}
 
-	responseMsg := &channels.Message{
-		ChannelID: targetChannelID,
-		Content:   response,
-		Metadata:  msg.Metadata,
-		Timestamp: time.Now(),
+	// Apply channel-aware formatting before chunking.
+	if g.config.Gateway.AutoFormatEnabled {
+		response = g.formatter.Format(response, channel.Name())
 	}
 
-	if err := channel.SendMessage(ctx, responseMsg); err != nil {
-		g.logger.Error().Err(err).Msg("failed to send response")
-		return
+	// Split into platform-appropriate chunks and send each one.
+	chunks := []string{response}
+	if g.chunker != nil {
+		chunks = g.chunker.Split(response, channel.Name())
 	}
 
-	// Record outbound message statistics
-	g.stats.RecordOutbound(responseMsg)
+	for i, chunk := range chunks {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
 
-	// Publish message sent event
-	g.eventBus.Publish(ctx, MessageSentEvent(responseMsg))
+		responseMsg := &channels.Message{
+			ChannelID: targetChannelID,
+			Content:   chunk,
+			Metadata:  msg.Metadata,
+			Timestamp: time.Now(),
+		}
+
+		if err := channel.SendMessage(ctx, responseMsg); err != nil {
+			g.logger.Error().Err(err).Int("chunk", i).Msg("failed to send response chunk")
+			return
+		}
+
+		// Record outbound statistics and publish event for the first chunk only.
+		if i == 0 {
+			g.stats.RecordOutbound(responseMsg)
+			g.eventBus.Publish(ctx, MessageSentEvent(responseMsg))
+		}
+	}
 }

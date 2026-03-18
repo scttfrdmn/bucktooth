@@ -30,3 +30,13 @@ func (r *Registry) GetAll() []agenkit.Tool {
 func (r *Registry) Enabled() bool {
 	return len(r.tools) > 0
 }
+
+// Get retrieves a registered tool by name.
+func (r *Registry) Get(name string) (agenkit.Tool, bool) {
+	for _, t := range r.tools {
+		if t.Name() == name {
+			return t, true
+		}
+	}
+	return nil, false
+}

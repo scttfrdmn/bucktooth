@@ -42,14 +42,20 @@ type MCPServerConfig struct {
 
 // GatewayConfig configures the gateway server
 type GatewayConfig struct {
-	WebSocketPort         int           `yaml:"websocket_port"`
-	HTTPPort              int           `yaml:"http_port"`
-	LogLevel              string        `yaml:"log_level"`
-	ShutdownTimeout       time.Duration `yaml:"shutdown_timeout"`
-	TestChannel           bool          `yaml:"test_channel"`
-	DashboardAuthPassword string        `yaml:"dashboard_auth_password"`
-	APIToken              string        `yaml:"api_token"`          // optional; if set, all non-probe routes require Bearer auth
-	AllowedWSOrigins      []string      `yaml:"allowed_ws_origins"` // nil = allow all (dev)
+	WebSocketPort         int            `yaml:"websocket_port"`
+	HTTPPort              int            `yaml:"http_port"`
+	LogLevel              string         `yaml:"log_level"`
+	ShutdownTimeout       time.Duration  `yaml:"shutdown_timeout"`
+	TestChannel           bool           `yaml:"test_channel"`
+	DashboardAuthPassword string         `yaml:"dashboard_auth_password"`
+	APIToken              string         `yaml:"api_token"`          // optional; if set, all non-probe routes require Bearer auth
+	AllowedWSOrigins      []string       `yaml:"allowed_ws_origins"` // nil = allow all (dev)
+	ChunkingEnabled       bool           `yaml:"chunking_enabled"`   // default true
+	ChunkingLimits        map[string]int `yaml:"chunking_limits"`    // per-channel-type char limits (overrides defaults)
+	DedupEnabled          bool           `yaml:"dedup_enabled"`      // default true
+	DedupWindowSize       int            `yaml:"dedup_window_size"`  // ring buffer size, default 256
+	AutoFormatEnabled     bool           `yaml:"auto_format_enabled"`     // default true
+	AutoProcessAttachments bool          `yaml:"auto_process_attachments"` // default true
 }
 
 // RateLimitConfig configures per-user token-bucket rate limiting.
@@ -93,6 +99,11 @@ type AgentConfig struct {
 	StubResponse string  `yaml:"stub_response"` // empty = echo mode
 	// Mode selects the agent pattern: "conversational", "react" (default), or "planning".
 	Mode string `yaml:"mode"`
+	// Retry settings for transient LLM errors.
+	RetryAttempts       int    `yaml:"retry_attempts"`        // default 3; 0 = disabled
+	RetryInitialBackoff string `yaml:"retry_initial_backoff"` // default "500ms"
+	// FallbackProviders is tried in order when the primary provider fails with a non-retryable error.
+	FallbackProviders []AgentConfig `yaml:"fallback_providers"`
 }
 
 // ToolsConfig configures available tools
@@ -155,10 +166,15 @@ type TracingConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Gateway: GatewayConfig{
-			WebSocketPort:   18789,
-			HTTPPort:        8080,
-			LogLevel:        "info",
-			ShutdownTimeout: 30 * time.Second,
+			WebSocketPort:          18789,
+			HTTPPort:               8080,
+			LogLevel:               "info",
+			ShutdownTimeout:        30 * time.Second,
+			ChunkingEnabled:        true,
+			DedupEnabled:           true,
+			DedupWindowSize:        256,
+			AutoFormatEnabled:      true,
+			AutoProcessAttachments: true,
 		},
 		Channels: map[string]ChannelConfig{},
 		Agents: AgentConfig{

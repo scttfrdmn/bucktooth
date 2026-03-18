@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/scttfrdmn/agenkit/agenkit-go/adapter/llm"
@@ -35,6 +36,7 @@ type AgentRouter struct {
 	stats           *Stats
 	logger          zerolog.Logger
 	config          config.AgentConfig
+	gatewayConfig   config.GatewayConfig
 	skillRegistry   *skills.SkillRegistry
 	skillsMaxActive int
 	summarizer      *memory.Summarizer
@@ -65,54 +67,102 @@ func (a *llmAgent) Process(ctx context.Context, msg *agenkit.Message) (*agenkit.
 	return a.llm.Complete(ctx, []*agenkit.Message{msg})
 }
 
-// NewAgentRouter creates a new agent router. It returns the router, the
-// underlying llm.LLM instance (for use by the summarizer), and any error.
-func NewAgentRouter(cfg config.AgentConfig, skillsCfg config.SkillsConfig, memStore memory.Store, registry *tools.Registry, stats *Stats, logger zerolog.Logger) (*AgentRouter, llm.LLM, error) {
-	var llmInstance llm.LLM
+// buildLLMInstance creates the base LLM for a given AgentConfig, then wraps it
+// with RetryLLM and FallbackLLM as configured. Fallback providers are built
+// recursively but their own FallbackProviders are ignored to avoid infinite recursion.
+func buildLLMInstance(cfg config.AgentConfig, logger zerolog.Logger) (llm.LLM, error) {
+	return buildLLMInstanceInner(cfg, logger, false)
+}
+
+func buildLLMInstanceInner(cfg config.AgentConfig, logger zerolog.Logger, isFallback bool) (llm.LLM, error) {
+	var base llm.LLM
 	switch cfg.LLMProvider {
 	case "stub":
-		llmInstance = NewStubLLM(cfg.StubResponse)
+		base = NewStubLLM(cfg.StubResponse)
 	case "anthropic":
 		opts := []llm.AnthropicOption{}
 		if cfg.APIBase != "" {
 			opts = append(opts, llm.WithBaseURL(cfg.APIBase))
 		}
-		llmInstance = llm.NewAnthropicLLM(cfg.APIKey, cfg.LLMModel, opts...)
+		base = llm.NewAnthropicLLM(cfg.APIKey, cfg.LLMModel, opts...)
 	case "openai":
-		llmInstance = llm.NewOpenAILLM(cfg.APIKey, cfg.LLMModel)
+		base = llm.NewOpenAILLM(cfg.APIKey, cfg.LLMModel)
 	case "openai-compatible":
-		llmInstance = llm.NewOpenAICompatibleLLM(cfg.APIBase, cfg.LLMModel, "openai-compatible", cfg.APIKey)
+		base = llm.NewOpenAICompatibleLLM(cfg.APIBase, cfg.LLMModel, "openai-compatible", cfg.APIKey)
 	case "gemini":
 		g, err := llm.NewGeminiLLM(cfg.APIKey, cfg.LLMModel)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create Gemini LLM: %w", err)
+			return nil, fmt.Errorf("failed to create Gemini LLM: %w", err)
 		}
-		llmInstance = g
+		base = g
 	case "ollama":
-		llmInstance = llm.NewOllamaLLM(cfg.LLMModel, cfg.APIBase)
+		base = llm.NewOllamaLLM(cfg.LLMModel, cfg.APIBase)
 	case "litellm":
-		llmInstance = llm.NewLiteLLMLLMWithAuth(cfg.APIBase, cfg.LLMModel, cfg.APIKey)
+		base = llm.NewLiteLLMLLMWithAuth(cfg.APIBase, cfg.LLMModel, cfg.APIKey)
 	case "bedrock":
 		b, err := llm.NewBedrockLLM(context.Background(), llm.BedrockConfig{ModelID: cfg.LLMModel})
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create Bedrock LLM: %w", err)
+			return nil, fmt.Errorf("failed to create Bedrock LLM: %w", err)
 		}
-		llmInstance = b
+		base = b
 	default:
-		return nil, nil, fmt.Errorf("unsupported LLM provider: %s", cfg.LLMProvider)
+		return nil, fmt.Errorf("unsupported LLM provider: %s", cfg.LLMProvider)
+	}
+
+	// Wrap with RetryLLM when retry is configured.
+	retryAttempts := cfg.RetryAttempts
+	if retryAttempts == 0 {
+		retryAttempts = 3 // default
+	}
+	if retryAttempts > 1 {
+		backoff := 500 * time.Millisecond
+		if cfg.RetryInitialBackoff != "" {
+			if parsed, err := time.ParseDuration(cfg.RetryInitialBackoff); err == nil {
+				backoff = parsed
+			}
+		}
+		base = NewRetryLLM(base, retryAttempts, backoff, logger)
+	}
+
+	// Wrap with FallbackLLM when fallback providers are configured (top-level only).
+	if !isFallback && len(cfg.FallbackProviders) > 0 {
+		all := []llm.LLM{base}
+		for _, fbCfg := range cfg.FallbackProviders {
+			fb, err := buildLLMInstanceInner(fbCfg, logger, true)
+			if err != nil {
+				logger.Warn().Err(err).Str("provider", fbCfg.LLMProvider).Msg("skipping fallback provider")
+				continue
+			}
+			all = append(all, fb)
+		}
+		if len(all) > 1 {
+			base = NewFallbackLLM(all, logger)
+		}
+	}
+
+	return base, nil
+}
+
+// NewAgentRouter creates a new agent router. It returns the router, the
+// underlying llm.LLM instance (for use by the summarizer), and any error.
+func NewAgentRouter(cfg config.AgentConfig, gatewayCfg config.GatewayConfig, skillsCfg config.SkillsConfig, memStore memory.Store, registry *tools.Registry, stats *Stats, logger zerolog.Logger) (*AgentRouter, llm.LLM, error) {
+	llmInstance, err := buildLLMInstance(cfg, logger)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	llmClient := &llmClientAdapter{llm: llmInstance}
 
 	ar := &AgentRouter{
-		userAgents:  make(map[string]*patterns.ConversationalAgent),
-		llmClient:   llmClient,
-		llmRaw:      llmInstance,
-		registry:    registry,
-		memoryStore: memStore,
-		stats:       stats,
-		logger:      logger.With().Str("component", "router").Logger(),
-		config:      cfg,
+		userAgents:    make(map[string]*patterns.ConversationalAgent),
+		llmClient:     llmClient,
+		llmRaw:        llmInstance,
+		registry:      registry,
+		memoryStore:   memStore,
+		stats:         stats,
+		logger:        logger.With().Str("component", "router").Logger(),
+		config:        cfg,
+		gatewayConfig: gatewayCfg,
 	}
 
 	// Initialise skill registry if enabled.
@@ -279,6 +329,59 @@ func (ar *AgentRouter) ActiveUsers() int {
 	return len(ar.userAgents)
 }
 
+// processAttachments invokes pdf_analyze / image_analyze for each attachment
+// in the message and returns a combined analysis prefix string.
+// Silently skips attachments when the required tool is not registered.
+func (ar *AgentRouter) processAttachments(ctx context.Context, msg *channels.Message) string {
+	if ar.registry == nil || len(msg.Attachments) == 0 {
+		return ""
+	}
+
+	var results []string
+	for _, att := range msg.Attachments {
+		var toolName string
+		switch {
+		case strings.EqualFold(att.ContentType, "application/pdf") ||
+			strings.HasSuffix(strings.ToLower(att.Filename), ".pdf"):
+			toolName = "pdf_analyze"
+		case strings.HasPrefix(strings.ToLower(att.ContentType), "image/"):
+			toolName = "image_analyze"
+		default:
+			continue
+		}
+
+		tool, ok := ar.registry.Get(toolName)
+		if !ok {
+			ar.logger.Debug().Str("tool", toolName).Msg("attachment tool not registered, skipping")
+			continue
+		}
+
+		prompt := "Summarize this document."
+		if toolName == "image_analyze" {
+			prompt = "Describe this image."
+		}
+
+		result, err := tool.Execute(ctx, map[string]any{
+			"source": att.URL,
+			"prompt": prompt,
+		})
+		if err != nil {
+			ar.logger.Warn().Err(err).Str("tool", toolName).Str("url", att.URL).Msg("attachment analysis failed")
+			continue
+		}
+		if result != nil && result.Success {
+			if s, ok := result.Data.(string); ok && s != "" {
+				results = append(results, s)
+			}
+		}
+	}
+
+	if len(results) == 0 {
+		return ""
+	}
+	return "[Attachment analysis]\n" + strings.Join(results, "\n\n") + "\n\n"
+}
+
 // ProcessMessage processes a message and returns a response
 func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message) (string, error) {
 	// Rate limit check — fast path before any tracing overhead.
@@ -300,7 +403,14 @@ func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message
 		Str("content", msg.Content).
 		Msg("processing message")
 
+	// Prepend attachment analysis when enabled.
 	content := msg.Content
+	if ar.gatewayConfig.AutoProcessAttachments && len(msg.Attachments) > 0 {
+		if prefix := ar.processAttachments(ctx, msg); prefix != "" {
+			content = prefix + content
+		}
+	}
+
 	agentMessage := &agenkit.Message{
 		Role:    "user",
 		Content: content,

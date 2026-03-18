@@ -1,7 +1,7 @@
 # BuckTooth vs OpenClaw — Feature Gap Analysis
 
-**Date**: 2026-03-17
-**BuckTooth version**: v0.5.0
+**Date**: 2026-03-18
+**BuckTooth version**: v0.10.0
 **OpenClaw version**: v2026.3.13 (released 2026-03-14)
 
 OpenClaw ([github.com/openclaw/openclaw](https://github.com/openclaw/openclaw)) is a TypeScript/Node.js
@@ -16,7 +16,7 @@ runtime profile (single binary, low memory, Kubernetes-native).
 | Attribute | BuckTooth | OpenClaw |
 |-----------|-----------|---------|
 | Language | Go | TypeScript / Node.js ≥22 |
-| Version | v0.5.0 | v2026.3.13 |
+| Version | v0.10.0 | v2026.3.13 |
 | Binary | Single static binary (~25 MB) | Node.js runtime required |
 | License | Apache 2.0 | MIT |
 | Helm chart | ✅ | ❌ |
@@ -47,49 +47,34 @@ OpenClaw supports 24+ channels. The highest-value gaps are **Teams** (enterprise
 
 ## 2. LLM Provider Support
 
-agenkit-go already implements all major providers. BuckTooth's `router.go` currently
-wires only `anthropic` and `stub`. The remaining providers are available and need to
-be connected.
-
 | Provider | agenkit-go | BuckTooth wired |
 |----------|-----------|----------------|
 | Anthropic Claude | ✅ `adapter/llm/anthropic.go` | ✅ |
-| OpenAI / GPT | ✅ `adapter/llm/openai.go` | ❌ |
-| OpenAI-compatible (vLLM, llama.cpp, etc.) | ✅ `adapter/llm/openai_compatible.go` | ❌ |
-| Google Gemini | ✅ `adapter/llm/gemini.go` | ❌ |
-| AWS Bedrock | ✅ `adapter/llm/bedrock.go` | ❌ |
-| Ollama (local models) | ✅ `adapter/llm/ollama.go` | ❌ |
-| LiteLLM proxy | ✅ `adapter/llm/litellm.go` | ❌ |
-
-**Action (BuckTooth)**: Expand `NewAgentRouter` switch to cover additional
-`llm_provider` values matching agenkit-go adapter names. No agenkit-go work needed.
-
-**Note on `api_base`**: `AnthropicLLM` has an internal `baseURL` field but
-`NewAnthropicLLM` does not expose it as a parameter. An agenkit-go issue has been
-opened to add `NewAnthropicLLMWithOptions` (see agenkit #TBD).
+| OpenAI / GPT | ✅ `adapter/llm/openai.go` | ✅ v0.6.0 |
+| OpenAI-compatible (vLLM, llama.cpp, etc.) | ✅ `adapter/llm/openai_compatible.go` | ✅ v0.6.0 |
+| Google Gemini | ✅ `adapter/llm/gemini.go` | ✅ v0.6.0 |
+| AWS Bedrock | ✅ `adapter/llm/bedrock.go` | ✅ v0.6.0 |
+| Ollama (local models) | ✅ `adapter/llm/ollama.go` | ✅ v0.6.0 |
+| LiteLLM proxy | ✅ `adapter/llm/litellm.go` | ✅ v0.6.0 |
+| LLM retry / exponential backoff | — | ✅ v0.10.0 |
+| LLM provider fallback chain | — | ✅ v0.10.0 |
 
 ---
 
 ## 3. Memory
 
-agenkit-go already has `memory/vector_memory.go` with a full `VectorMemory` type,
-`EmbeddingProvider` interface, `VectorStore` interface, and `MemoryVectorStore`
-(in-memory cosine similarity). BuckTooth needs a new `memory/vector` backend that
-wraps this.
-
 | Capability | agenkit-go | BuckTooth | OpenClaw |
 |-----------|-----------|-----------|---------|
 | In-memory history | ✅ | ✅ | ✅ |
-| Redis-backed persistence | ✅ | ✅ | ✅ (plugin) |
+| Redis-backed persistence | ✅ | ✅ v0.6.0 | ✅ (plugin) |
 | Per-user history isolation | — | ✅ v0.5.0 | ✅ |
-| Vector store interface | ✅ `VectorStore` | ❌ not wired | ✅ |
-| Semantic search (cosine) | ✅ `MemoryVectorStore` | ❌ not wired | ✅ |
-| Hybrid BM25 + vector | ❌ | ❌ | ✅ |
+| Vector store interface | ✅ `VectorStore` | ✅ v0.6.0 | ✅ |
+| Semantic search (cosine) | ✅ `MemoryVectorStore` | ✅ v0.6.0 | ✅ |
+| Hybrid BM25 + vector | ❌ | ✅ v0.9.0 | ✅ |
+| SQLite persistence | — | ✅ v0.8.0 | ❌ |
+| Memory summarization | — | ✅ v0.8.0 | ✅ |
 | Temporal decay / recency boost | ❌ | ❌ | ✅ |
 | Automatic context compaction | ❌ | ❌ | ✅ |
-
-**Action (BuckTooth)**: Add `memory/vector` type to config; wire `VectorMemory` from
-agenkit-go with an `EmbeddingProvider` (Anthropic embeddings API or OpenAI-compatible).
 
 ---
 
@@ -100,21 +85,33 @@ agenkit-go with an `EmbeddingProvider` (Anthropic embeddings API or OpenAI-compa
 | Calculator | ✅ | ✅ |
 | File system (sandboxed) | ✅ | ✅ |
 | Web search (Brave) | ✅ | ✅ (Brave, Firecrawl, Gemini) |
+| Web fetch / content extraction | ✅ v0.6.0 | ✅ |
 | Message formatter | ✅ | ✅ |
 | Calendar | ✅ | ❌ |
-| Web fetch / content extraction | ❌ | ✅ |
-| Shell / exec (with approval gate) | ❌ | ✅ |
+| Shell / exec (with approval gate) | ✅ v0.8.0 | ✅ |
+| PDF analysis | ✅ v0.9.0 | ✅ |
+| Image analysis / generation | ✅ v0.9.0 | ✅ |
+| Attachment auto-routing | ✅ v0.10.0 | ✅ |
+| Cron / scheduled jobs | ✅ v0.9.0 | ✅ |
+| MCP tool bridge | ✅ v0.8.0 | ✅ |
 | Browser automation (Chrome CDP) | ❌ | ✅ |
-| PDF analysis | ❌ | ✅ |
-| Image analysis / generation | ❌ | ✅ |
-| Cron / scheduled jobs | ❌ | ✅ |
-| MCP tool bridge | ❌ | ✅ |
-
-**Quickest wins**: web fetch (low deps, complements existing web search), cron/scheduling.
 
 ---
 
-## 5. Plugin / Skill Ecosystem — ClawHub
+## 5. Reliability & Quality
+
+| Capability | BuckTooth | OpenClaw | RustyNail |
+|-----------|-----------|---------|-----------|
+| Long-message chunking per platform | ✅ v0.10.0 | ✅ | ✅ |
+| Message deduplication (ring buffer) | ✅ v0.10.0 | ✅ | ✅ |
+| LLM retry / exponential backoff | ✅ v0.10.0 | ✅ | ✅ |
+| Channel-aware markdown formatting | ✅ v0.10.0 | ✅ | ✅ |
+| LLM provider fallback chain | ✅ v0.10.0 | ✅ | ✅ |
+| Attachment auto-routing to tools | ✅ v0.10.0 | ✅ | ✅ |
+
+---
+
+## 6. Plugin / Skill Ecosystem — ClawHub
 
 ClawHub ([github.com/openclaw/clawhub](https://github.com/openclaw/clawhub)) hosts
 13,700+ community skills. Each skill is:
@@ -125,19 +122,12 @@ ClawHub ([github.com/openclaw/clawhub](https://github.com/openclaw/clawhub)) hos
   [Model Context Protocol](https://modelcontextprotocol.io/) (JSON-RPC 2.0 over stdio
   or HTTP/SSE)
 
-**ClawHub compatibility = MCP client support.** If BuckTooth (via agenkit-go) can
-act as an MCP client, it can connect to any ClawHub skill's MCP server and expose its
-tools through the existing ReActAgent pipeline. The SKILL.md metadata layer
-(dependency checking, env-var requirements) is lightweight to implement separately
-in BuckTooth.
-
-agenkit-go currently has no MCP support (`protocols/agui` is the only protocol
-implementation). An issue has been filed on agenkit-go to add MCP client + server
-support (see below).
+BuckTooth has MCP client support (v0.8.0) and a file-based skill system (v0.8.0). Full
+ClawHub compatibility requires matching the SKILL.md dependency-checking layer.
 
 ---
 
-## 6. Observability
+## 7. Observability
 
 | Capability | BuckTooth | OpenClaw |
 |-----------|-----------|---------|
@@ -146,31 +136,28 @@ support (see below).
 | `/live` + `/ready` probes | ✅ v0.5.0 | ✅ |
 | Message statistics + ring buffer | ✅ v0.5.0 | ✅ |
 | `/dashboard/data` JSON endpoint | ✅ v0.5.0 | ✅ |
-| Token usage / cost tracking | ❌ | ✅ |
+| Token usage / cost tracking | ✅ v0.6.0 | ✅ |
 | Purpose-built AI metrics dashboard | ❌ | ✅ (ClawMetry) |
-
-Token/cost tracking requires surfacing `InputTokens`/`OutputTokens` from `anthropicUsage`
-(already in the `AnthropicLLM` response metadata) through to the gateway stats layer.
 
 ---
 
-## 7. Security
+## 8. Security
 
 | Capability | BuckTooth | OpenClaw |
 |-----------|-----------|---------|
 | Dashboard Basic auth | ✅ v0.5.0 | ✅ |
-| Gateway API bearer token | ❌ | ✅ (required by default) |
+| Gateway API bearer token | ✅ v0.6.0 | ✅ (required by default) |
+| Webhook HMAC verification | ✅ v0.8.0 | ✅ |
+| Rate limiting (per-user token bucket) | ✅ v0.9.0 | ✅ |
+| Message deduplication | ✅ v0.10.0 | ✅ |
 | Device pairing with approval | ❌ | ✅ |
 | Exec approval gates | ❌ | ✅ |
 | Filesystem sandboxing | ✅ (partial) | ✅ (Docker containment) |
 | Security audit command | ❌ | ✅ |
 
-**Gateway bearer token auth is a production blocker.** The HTTP API and WebSocket
-server currently have no authentication. This is the highest-priority security gap.
-
 ---
 
-## 8. Deployment
+## 9. Deployment
 
 | Capability | BuckTooth | OpenClaw |
 |-----------|-----------|---------|
@@ -179,33 +166,28 @@ server currently have no authentication. This is the highest-priority security g
 | Helm chart | ✅ | ❌ |
 | Distroless/minimal image | ✅ | ❌ |
 | Test harness (zero-credential CI) | ✅ v0.4.5 | partial |
+| Admin API | ✅ v0.9.0 | ✅ |
 | Tailscale / public tunnel | ❌ | ✅ |
 | Remote device pairing | ❌ | ✅ |
 | Companion macOS/iOS/Android apps | ❌ | ✅ |
 | Voice Wake / Talk Mode | ❌ | ✅ |
 
-**BuckTooth's deployment story is stronger** for Kubernetes and CI environments.
+BuckTooth's deployment story is stronger for Kubernetes and CI environments.
 Companion apps and voice are out of scope for a Go gateway.
 
 ---
 
-## Priority Matrix
-
-### Immediate (production-blocker or one-day effort)
-1. **Gateway bearer token auth** — no auth on HTTP/WS is a production blocker
-2. **Multi-provider LLM in router.go** — agenkit-go already has the adapters; just wiring
-3. **Token/cost tracking** — metadata is already in Anthropic responses; surface it
-4. **Web fetch tool** — single-dep addition, complements existing web search
+## Priority Matrix (post-v0.10.0)
 
 ### Medium effort, high ROI
-5. **MCP client support in agenkit-go** — unlocks ClawHub ecosystem; tracked in agenkit issue
-6. **Vector memory backend** — agenkit-go has `VectorMemory`; needs wiring + embedding provider config
-7. **`AnthropicLLM` base URL option** — tracked in agenkit issue; trivial once merged
+1. **Microsoft Teams channel** — highest-value missing channel for enterprise
+2. **ClawHub compatibility layer** — SKILL.md dependency checking on top of existing MCP support
+3. **Temporal memory decay** — recency boost for more relevant context retrieval
 
 ### Larger investments
-8. **Microsoft Teams channel** — highest-value missing channel for enterprise
-9. **Shell/exec tool with approval gate** — requires HITL pattern (already in agenkit-go `patterns/human_in_loop.go`)
-10. **Signal channel** — libsignal complexity
+4. **Signal channel** — libsignal complexity
+5. **Browser automation (Chrome CDP)** — headless browser tool
+6. **Streaming responses** — requires WebSocket protocol changes + agenkit streaming support
 
 ### Out of scope for BuckTooth core
 - Companion macOS/iOS/Android native apps
