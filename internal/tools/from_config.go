@@ -117,5 +117,14 @@ func FromConfig(cfg config.ToolsConfig, agentCfg config.AgentConfig, logger zero
 		logger.Info().Msg("image_analyze tool registered")
 	}
 
+	if cfg.BrowserEnabled {
+		timeout := cfg.BrowserTimeout
+		if timeout <= 0 {
+			timeout = 30
+		}
+		registry.Register(NewBrowserTool(timeout))
+		logger.Info().Int("timeout_seconds", timeout).Msg("browser tool registered")
+	}
+
 	return registry, nil
 }

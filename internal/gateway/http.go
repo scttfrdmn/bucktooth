@@ -19,6 +19,7 @@ import (
 	"github.com/scttfrdmn/bucktooth/internal/channels"
 	cronsched "github.com/scttfrdmn/bucktooth/internal/cron"
 	"github.com/scttfrdmn/bucktooth/internal/memory"
+	skillsdep "github.com/scttfrdmn/bucktooth/internal/skills"
 )
 
 // HTTPServer provides HTTP endpoints
@@ -57,6 +58,9 @@ type HTTPServer struct {
 	// Admin API dependencies
 	memoryStore memory.Store
 	scheduler   *cronsched.Scheduler
+
+	// Skill dep checker for GET /admin/skills/deps (nil when dep checking is disabled)
+	depChecker *skillsdep.DepChecker
 }
 
 // NewHTTPServer creates a new HTTP server
@@ -149,6 +153,11 @@ func (h *HTTPServer) SetMemoryStore(store memory.Store) {
 // SetScheduler attaches the cron scheduler for the /cron/jobs endpoint.
 func (h *HTTPServer) SetScheduler(s *cronsched.Scheduler) {
 	h.scheduler = s
+}
+
+// SetDepChecker attaches the skill dep checker for the GET /admin/skills/deps endpoint.
+func (h *HTTPServer) SetDepChecker(dc *skillsdep.DepChecker) {
+	h.depChecker = dc
 }
 
 // BroadcastEvent sends payload to all connected dashboard WebSocket clients.
@@ -411,6 +420,85 @@ func (h *HTTPServer) handleCronJobs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleAdminSkillsDeps handles GET /admin/skills/deps.
+// Returns a JSON array of DepResult for all currently-loaded skills.
+func (h *HTTPServer) handleAdminSkillsDeps(w http.ResponseWriter, r *http.Request) {
+	var results []skillsdep.DepResult
+	if h.depChecker != nil && h.skillRegistry != nil {
+		all := h.skillRegistry.All()
+		names := make([]string, len(all))
+		for i, s := range all {
+			names[i] = s.Name
+		}
+		results = h.depChecker.CheckAll(names)
+	}
+	if results == nil {
+		results = []skillsdep.DepResult{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(results); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode admin skills deps response")
+	}
+}
+
+// --- OpenAI-compatible models types ---
+
+type openAIModel struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
+}
+
+type openAIModelsResponse struct {
+	Object string        `json:"object"`
+	Data   []openAIModel `json:"data"`
+}
+
+// handleModels handles GET /v1/models and returns a static model list for the
+// configured LLM provider, matching the OpenAI API format.
+func (h *HTTPServer) handleModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	provider := ""
+	if h.agentRouter != nil {
+		provider = h.agentRouter.config.LLMProvider
+	}
+
+	created := time.Now().Unix()
+	var models []openAIModel
+	switch provider {
+	case "openai":
+		models = []openAIModel{
+			{ID: "gpt-4o", Object: "model", Created: created, OwnedBy: "openai"},
+			{ID: "gpt-4o-mini", Object: "model", Created: created, OwnedBy: "openai"},
+		}
+	case "stub":
+		models = []openAIModel{
+			{ID: "stub-model", Object: "model", Created: created, OwnedBy: "bucktooth"},
+		}
+	default:
+		// anthropic, openai-compatible, gemini, ollama, litellm, bedrock, etc.
+		models = []openAIModel{
+			{ID: "claude-opus-4", Object: "model", Created: created, OwnedBy: "anthropic"},
+			{ID: "claude-sonnet-4-5", Object: "model", Created: created, OwnedBy: "anthropic"},
+			{ID: "claude-haiku-4-5", Object: "model", Created: created, OwnedBy: "anthropic"},
+		}
+	}
+
+	resp := openAIModelsResponse{
+		Object: "list",
+		Data:   models,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode models response")
+	}
+}
+
 // --- OpenAI-compatible completions types ---
 
 type openAIChatMessage struct {
@@ -650,10 +738,12 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	// Admin API (Bearer-token protected via apiTokenMiddleware on outer handler)
 	mux.HandleFunc("/admin/memory/", h.handleAdminMemoryFlush)
 	mux.HandleFunc("/admin/skills/reload", h.handleAdminSkillsReload)
+	mux.HandleFunc("/admin/skills/deps", h.handleAdminSkillsDeps)
 	mux.HandleFunc("/admin/channels/health", h.handleAdminChannelsHealth)
 
-	// OpenAI-compatible completions endpoint (Bearer-token protected when configured)
+	// OpenAI-compatible endpoints (Bearer-token protected when configured)
 	mux.HandleFunc("/v1/chat/completions", h.handleCompletions)
+	mux.HandleFunc("/v1/models", h.handleModels)
 
 	// Programmatically registered extra routes (e.g. test channel)
 	for pattern, handler := range h.extraRoutes {

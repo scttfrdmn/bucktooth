@@ -1,7 +1,7 @@
 # BuckTooth vs OpenClaw — Feature Gap Analysis
 
-**Date**: 2026-03-18
-**BuckTooth version**: v0.11.0
+**Date**: 2026-03-18 (updated 2026-03-18 for v0.12.0)
+**BuckTooth version**: v0.12.0
 **OpenClaw version**: v2026.3.13 (released 2026-03-14)
 
 OpenClaw ([github.com/openclaw/openclaw](https://github.com/openclaw/openclaw)) is a TypeScript/Node.js
@@ -16,7 +16,7 @@ runtime profile (single binary, low memory, Kubernetes-native).
 | Attribute | BuckTooth | OpenClaw |
 |-----------|-----------|---------|
 | Language | Go | TypeScript / Node.js ≥22 |
-| Version | v0.11.0 | v2026.3.13 |
+| Version | v0.12.0 | v2026.3.13 |
 | Binary | Single static binary (~25 MB) | Node.js runtime required |
 | License | Apache 2.0 | MIT |
 | Helm chart | ✅ | ❌ |
@@ -60,6 +60,7 @@ OpenClaw supports 24+ channels. Highest-value remaining gap: **Signal** (private
 | LLM provider fallback chain | — | ✅ v0.10.0 |
 | Streaming responses (WS token streaming) | ✅ | ✅ v0.11.0 |
 | OpenAI-compatible completions endpoint | — | ✅ v0.11.0 |
+| OpenAI-compatible GET /v1/models endpoint | — | ✅ v0.12.0 |
 
 ---
 
@@ -96,7 +97,7 @@ OpenClaw supports 24+ channels. Highest-value remaining gap: **Signal** (private
 | Attachment auto-routing | ✅ v0.10.0 | ✅ |
 | Cron / scheduled jobs | ✅ v0.9.0 | ✅ |
 | MCP tool bridge | ✅ v0.8.0 | ✅ |
-| Browser automation (Chrome CDP) | ❌ | ✅ |
+| Browser automation (Chrome CDP) | ✅ v0.12.0 | ✅ |
 
 ---
 
@@ -126,8 +127,9 @@ ClawHub ([github.com/openclaw/clawhub](https://github.com/openclaw/clawhub)) hos
   [Model Context Protocol](https://modelcontextprotocol.io/) (JSON-RPC 2.0 over stdio
   or HTTP/SSE)
 
-BuckTooth has MCP client support (v0.8.0) and a file-based skill system (v0.8.0). Full
-ClawHub compatibility requires matching the SKILL.md dependency-checking layer.
+BuckTooth has MCP client support (v0.8.0) and a file-based skill system (v0.8.0).
+SKILL.md dependency validation was added in v0.12.0 (`dep_check_enabled: true` in `skills` config),
+completing the core ClawHub compatibility layer.
 
 ---
 
@@ -182,15 +184,16 @@ Companion apps and voice are out of scope for a Go gateway.
 
 ---
 
-## Priority Matrix (post-v0.11.0)
+## Priority Matrix (post-v0.12.0)
 
-### Medium effort, high ROI — v0.12.x
-1. **ClawHub compatibility layer** — SKILL.md dependency checking on top of existing MCP support
-2. **Browser automation (Chrome CDP)** — headless browser tool
+### Shipped in v0.12.0
+1. ✅ **ClawHub SKILL.md dep validation** — `dep_check_enabled: true` in `skills` config
+2. ✅ **Browser automation (Chrome CDP)** — `browser_enabled: true` in `tools` config
+3. ✅ **GET /v1/models endpoint** — OpenAI-compatible model listing
 
-### Larger investments — v1.0.0+
-3. **Signal channel** — libsignal complexity, device pairing
-4. **ClawMetry equivalent** — purpose-built observability dashboard
+### Larger investments — v0.13.x+
+4. **Signal channel** — libsignal complexity, device pairing
+5. **ClawMetry equivalent** — purpose-built observability dashboard
 
 ### Out of scope for BuckTooth core
 - Companion macOS/iOS/Android native apps

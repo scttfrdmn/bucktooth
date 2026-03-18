@@ -109,15 +109,17 @@ type AgentConfig struct {
 
 // ToolsConfig configures available tools
 type ToolsConfig struct {
-	Calendar   ToolConfig `yaml:"calendar"`
-	FileSystem ToolConfig `yaml:"filesystem"`
-	WebSearch  ToolConfig `yaml:"websearch"`
-	WebFetch   ToolConfig `yaml:"webfetch"`
-	Calculator ToolConfig `yaml:"calculator"`
-	Message    ToolConfig `yaml:"message"`
-	Shell      ToolConfig `yaml:"shell"`
-	PDF        ToolConfig `yaml:"pdf"`
-	Image      ToolConfig `yaml:"image"`
+	Calendar       ToolConfig `yaml:"calendar"`
+	FileSystem     ToolConfig `yaml:"filesystem"`
+	WebSearch      ToolConfig `yaml:"websearch"`
+	WebFetch       ToolConfig `yaml:"webfetch"`
+	Calculator     ToolConfig `yaml:"calculator"`
+	Message        ToolConfig `yaml:"message"`
+	Shell          ToolConfig `yaml:"shell"`
+	PDF            ToolConfig `yaml:"pdf"`
+	Image          ToolConfig `yaml:"image"`
+	BrowserEnabled bool       `yaml:"browser_enabled"` // enable Chrome CDP browser tool; default false
+	BrowserTimeout int        `yaml:"browser_timeout"`  // per-action timeout in seconds; default 30
 }
 
 // ToolConfig configures a specific tool
@@ -143,6 +145,7 @@ type SkillsConfig struct {
 	Enabled         bool     `yaml:"enabled"`
 	SearchPaths     []string `yaml:"search_paths"`
 	MaxActiveSkills int      `yaml:"max_active_skills"`
+	DepCheckEnabled bool     `yaml:"dep_check_enabled"` // validate SKILL.md deps before injecting; default false
 }
 
 // ObservabilityConfig configures metrics and tracing

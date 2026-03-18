@@ -202,6 +202,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 	httpServer.SetVersion(readVersionFile())
 	httpServer.SetUserPrefs(userPrefs)
 	httpServer.SetSkillRegistry(agentRouter.SkillRegistry())
+	httpServer.SetDepChecker(agentRouter.SkillDepChecker())
 	httpServer.SetMemoryStore(memStore)
 
 	// Register test channel routes and channel before the gateway struct is created.

@@ -19,6 +19,7 @@ import (
 	"github.com/scttfrdmn/bucktooth/internal/config"
 	"github.com/scttfrdmn/bucktooth/internal/memory"
 	"github.com/scttfrdmn/bucktooth/internal/observability"
+	skillsdep "github.com/scttfrdmn/bucktooth/internal/skills"
 	"github.com/scttfrdmn/bucktooth/internal/tools"
 	"go.opentelemetry.io/otel"
 )
@@ -39,6 +40,7 @@ type AgentRouter struct {
 	gatewayConfig   config.GatewayConfig
 	skillRegistry   *skills.SkillRegistry
 	skillsMaxActive int
+	skillDepChecker *skillsdep.DepChecker // nil if dep checking is disabled
 	summarizer      *memory.Summarizer
 	rateLimiter     *RateLimiter
 	userPrefs       *UserPrefs
@@ -186,6 +188,10 @@ func NewAgentRouter(cfg config.AgentConfig, gatewayCfg config.GatewayConfig, ski
 		if ar.skillsMaxActive <= 0 {
 			ar.skillsMaxActive = 3
 		}
+		if skillsCfg.DepCheckEnabled {
+			ar.skillDepChecker = skillsdep.NewDepChecker(searchPaths)
+			logger.Info().Msg("skill dep checker enabled")
+		}
 		logger.Info().Int("skills", len(discovered)).Msg("skill registry initialised")
 	}
 
@@ -195,6 +201,11 @@ func NewAgentRouter(cfg config.AgentConfig, gatewayCfg config.GatewayConfig, ski
 // SkillRegistry returns the router's skill registry (may be nil if skills are disabled).
 func (ar *AgentRouter) SkillRegistry() *skills.SkillRegistry {
 	return ar.skillRegistry
+}
+
+// SkillDepChecker returns the router's skill dep checker (nil when dep checking is disabled).
+func (ar *AgentRouter) SkillDepChecker() *skillsdep.DepChecker {
+	return ar.skillDepChecker
 }
 
 // SetSummarizer attaches a memory Summarizer that is called after each message turn.
@@ -242,6 +253,7 @@ func (ar *AgentRouter) handleSystemCommand(msg *channels.Message, content string
 // maybeInjectSkills prepends relevant skill instructions to the message content
 // when skills are enabled. Returns the original message unchanged if no skills
 // are loaded or no relevant skills are found for the query.
+// When dep checking is enabled, skills with unmet dependencies are silently dropped.
 func (ar *AgentRouter) maybeInjectSkills(msg *agenkit.Message) *agenkit.Message {
 	if ar.skillRegistry == nil {
 		return msg
@@ -250,6 +262,31 @@ func (ar *AgentRouter) maybeInjectSkills(msg *agenkit.Message) *agenkit.Message 
 	relevant := ar.skillRegistry.FindRelevantSkills(query, ar.skillsMaxActive)
 	if len(relevant) == 0 {
 		return msg
+	}
+
+	// Filter out skills with unmet dependencies when dep checking is enabled.
+	if ar.skillDepChecker != nil {
+		names := make([]string, len(relevant))
+		for i, s := range relevant {
+			names[i] = s.Name
+		}
+		results := ar.skillDepChecker.CheckAll(names)
+		filtered := relevant[:0]
+		for i, s := range relevant {
+			if results[i].OK {
+				filtered = append(filtered, s)
+			} else {
+				ar.logger.Warn().
+					Str("skill", s.Name).
+					Strs("missing_bins", results[i].MissingBins).
+					Strs("missing_env", results[i].MissingEnv).
+					Msg("skill dropped: unmet dependencies")
+			}
+		}
+		relevant = filtered
+		if len(relevant) == 0 {
+			return msg
+		}
 	}
 
 	var sb strings.Builder
