@@ -14,38 +14,63 @@ import (
 )
 
 // wsInboundMsg is the JSON structure expected from WebSocket clients.
+// The Stream field is optional; false means the non-streaming (legacy) path.
 type wsInboundMsg struct {
 	UserID  string `json:"user_id"`
 	Content string `json:"content"`
+	Stream  bool   `json:"stream,omitempty"`
 }
 
-// wsOutboundMsg is the JSON structure sent back to WebSocket clients.
+// wsOutboundMsg is the JSON structure sent back to WebSocket clients (non-streaming path).
 type wsOutboundMsg struct {
 	UserID  string `json:"user_id"`
 	Content string `json:"content"`
 	Error   string `json:"error,omitempty"`
 }
 
+// wsChunkMsg is sent for each token chunk during streaming. type="chunk"
+type wsChunkMsg struct {
+	Type    string `json:"type"`
+	UserID  string `json:"user_id"`
+	Content string `json:"content"`
+}
+
+// wsDoneMsg signals end-of-stream. type="done"
+type wsDoneMsg struct {
+	Type   string `json:"type"`
+	UserID string `json:"user_id"`
+}
+
+// wsErrorMsg signals a streaming error. type="error"
+type wsErrorMsg struct {
+	Type   string `json:"type"`
+	UserID string `json:"user_id"`
+	Error  string `json:"error"`
+}
+
 // WebSocketServer provides WebSocket connectivity
 type WebSocketServer struct {
-	port           int
-	server         *http.Server
-	upgrader       websocket.Upgrader
-	clients        map[*websocket.Conn]bool
-	clientMu       sync.RWMutex
-	logger         zerolog.Logger
-	allowedOrigins map[string]bool // nil = allow all (dev)
-	router         *AgentRouter
+	port             int
+	server           *http.Server
+	upgrader         websocket.Upgrader
+	clients          map[*websocket.Conn]bool
+	clientMu         sync.RWMutex
+	logger           zerolog.Logger
+	allowedOrigins   map[string]bool // nil = allow all (dev)
+	router           *AgentRouter
+	streamingEnabled bool
 }
 
 // NewWebSocketServer creates a new WebSocket server.
 // allowedOrigins is the set of permitted Origin header values; nil/empty allows all (dev mode).
-func NewWebSocketServer(port int, allowedOrigins []string, router *AgentRouter, logger zerolog.Logger) *WebSocketServer {
+// streamingEnabled gates the token-streaming path for clients that request stream:true.
+func NewWebSocketServer(port int, allowedOrigins []string, router *AgentRouter, streamingEnabled bool, logger zerolog.Logger) *WebSocketServer {
 	ws := &WebSocketServer{
-		port:    port,
-		clients: make(map[*websocket.Conn]bool),
-		logger:  logger.With().Str("component", "websocket").Logger(),
-		router:  router,
+		port:             port,
+		clients:          make(map[*websocket.Conn]bool),
+		logger:           logger.With().Str("component", "websocket").Logger(),
+		router:           router,
+		streamingEnabled: streamingEnabled,
 	}
 	if len(allowedOrigins) > 0 {
 		ws.allowedOrigins = make(map[string]bool, len(allowedOrigins))
@@ -134,6 +159,9 @@ func (ws *WebSocketServer) handleWebSocket(w http.ResponseWriter, r *http.Reques
 
 	ctx := r.Context()
 
+	// writeMu serialises all writes to this connection (gorilla WebSocket requirement).
+	var writeMu sync.Mutex
+
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -148,35 +176,82 @@ func (ws *WebSocketServer) handleWebSocket(w http.ResponseWriter, r *http.Reques
 		var in wsInboundMsg
 		if err := json.Unmarshal(raw, &in); err != nil || in.UserID == "" || in.Content == "" {
 			out, _ := json.Marshal(wsOutboundMsg{Error: "invalid message: must be JSON with user_id and content"})
-			if writeErr := conn.WriteMessage(websocket.TextMessage, out); writeErr != nil {
+			writeMu.Lock()
+			writeErr := conn.WriteMessage(websocket.TextMessage, out)
+			writeMu.Unlock()
+			if writeErr != nil {
 				break
 			}
 			continue
 		}
 
-		chanMsg := &channels.Message{
-			UserID:    in.UserID,
-			ChannelID: "websocket",
-			Content:   in.Content,
-			Timestamp: time.Now(),
-		}
-
-		response, err := ws.router.ProcessMessage(ctx, chanMsg)
-		if err != nil {
-			ws.logger.Error().Err(err).Str("user_id", in.UserID).Msg("router error")
-			out, _ := json.Marshal(wsOutboundMsg{UserID: in.UserID, Error: err.Error()})
-			if writeErr := conn.WriteMessage(websocket.TextMessage, out); writeErr != nil {
+		if in.Stream && ws.streamingEnabled {
+			ws.handleStreamingMessage(ctx, conn, &writeMu, in)
+		} else {
+			if broken := ws.handleSyncMessage(ctx, conn, &writeMu, in); broken {
 				break
 			}
-			continue
-		}
-
-		out, _ := json.Marshal(wsOutboundMsg{UserID: in.UserID, Content: response})
-		if err := conn.WriteMessage(websocket.TextMessage, out); err != nil {
-			ws.logger.Error().Err(err).Msg("failed to write message")
-			break
 		}
 	}
+}
+
+// handleSyncMessage processes a non-streaming message and writes a single wsOutboundMsg.
+// Returns true if the connection should be closed.
+func (ws *WebSocketServer) handleSyncMessage(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, in wsInboundMsg) bool {
+	chanMsg := &channels.Message{
+		UserID:    in.UserID,
+		ChannelID: "websocket",
+		Content:   in.Content,
+		Timestamp: time.Now(),
+	}
+
+	response, err := ws.router.ProcessMessage(ctx, chanMsg)
+	if err != nil {
+		ws.logger.Error().Err(err).Str("user_id", in.UserID).Msg("router error")
+		out, _ := json.Marshal(wsOutboundMsg{UserID: in.UserID, Error: err.Error()})
+		writeMu.Lock()
+		writeErr := conn.WriteMessage(websocket.TextMessage, out)
+		writeMu.Unlock()
+		return writeErr != nil
+	}
+
+	out, _ := json.Marshal(wsOutboundMsg{UserID: in.UserID, Content: response})
+	writeMu.Lock()
+	writeErr := conn.WriteMessage(websocket.TextMessage, out)
+	writeMu.Unlock()
+	return writeErr != nil
+}
+
+// handleStreamingMessage processes a streaming message, writing chunk/done/error frames.
+func (ws *WebSocketServer) handleStreamingMessage(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, in wsInboundMsg) {
+	chanMsg := &channels.Message{
+		UserID:    in.UserID,
+		ChannelID: "websocket",
+		Content:   in.Content,
+		Timestamp: time.Now(),
+	}
+
+	chunkFn := func(chunk string) error {
+		out, _ := json.Marshal(wsChunkMsg{Type: "chunk", UserID: in.UserID, Content: chunk})
+		writeMu.Lock()
+		err := conn.WriteMessage(websocket.TextMessage, out)
+		writeMu.Unlock()
+		return err
+	}
+
+	if err := ws.router.StreamMessage(ctx, chanMsg, chunkFn); err != nil {
+		ws.logger.Error().Err(err).Str("user_id", in.UserID).Msg("streaming router error")
+		out, _ := json.Marshal(wsErrorMsg{Type: "error", UserID: in.UserID, Error: err.Error()})
+		writeMu.Lock()
+		_ = conn.WriteMessage(websocket.TextMessage, out)
+		writeMu.Unlock()
+		return
+	}
+
+	out, _ := json.Marshal(wsDoneMsg{Type: "done", UserID: in.UserID})
+	writeMu.Lock()
+	_ = conn.WriteMessage(websocket.TextMessage, out)
+	writeMu.Unlock()
 }
 
 // Broadcast sends a message to all connected clients

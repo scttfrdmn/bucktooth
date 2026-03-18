@@ -2,7 +2,9 @@ package memory
 
 import (
 	"context"
+	"math"
 	"sort"
+	"time"
 
 	agenmem "github.com/scttfrdmn/agenkit/agenkit-go/memory"
 )
@@ -12,15 +14,19 @@ import (
 // vector store (for semantic embeddings). GetHistory returns messages ranked by a
 // weighted combination of both signals.
 type HybridStore struct {
-	raw        *InMemoryStore
-	vec        *VectorStore
-	bm25Weight float64 // 0.0 = pure semantic, 1.0 = pure BM25
-	scorer     BM25Scorer
+	raw           *InMemoryStore
+	vec           *VectorStore
+	bm25Weight    float64 // 0.0 = pure semantic, 1.0 = pure BM25
+	scorer        BM25Scorer
+	decayEnabled  bool
+	decayHalfLife float64 // hours; must be > 0 when decayEnabled
 }
 
 // NewHybridStore creates a HybridStore. hybridWeight controls the blend
 // (0.0–1.0 clamped); embedProvider is used by the underlying VectorStore.
-func NewHybridStore(embedProvider agenmem.EmbeddingProvider, hybridWeight float64) *HybridStore {
+// When decayEnabled is true, recency is scored via exponential decay with
+// the given half-life in hours (must be > 0; falls back to linear if 0).
+func NewHybridStore(embedProvider agenmem.EmbeddingProvider, hybridWeight float64, decayEnabled bool, decayHalfLifeHours float64) *HybridStore {
 	if hybridWeight < 0 {
 		hybridWeight = 0
 	}
@@ -28,10 +34,12 @@ func NewHybridStore(embedProvider agenmem.EmbeddingProvider, hybridWeight float6
 		hybridWeight = 1
 	}
 	return &HybridStore{
-		raw:        NewInMemoryStore(),
-		vec:        NewVectorStore(embedProvider),
-		bm25Weight: hybridWeight,
-		scorer:     BM25Scorer{},
+		raw:           NewInMemoryStore(),
+		vec:           NewVectorStore(embedProvider),
+		bm25Weight:    hybridWeight,
+		scorer:        BM25Scorer{},
+		decayEnabled:  decayEnabled,
+		decayHalfLife: decayHalfLifeHours,
 	}
 }
 
@@ -70,10 +78,28 @@ func (h *HybridStore) GetHistory(ctx context.Context, userID string, limit int) 
 	bm25Raw := h.scorer.Score(corpus, query)
 	bm25Norm := normalise(bm25Raw)
 
-	// Recency score: more recent messages score higher (linear 0→1).
+	// Recency score: more recent messages score higher.
+	// With decay enabled: exponential decay (exp(-age * ln2 / halfLife)); score=1 at age=0, 0.5 at age=halfLife.
+	// Without decay (or invalid halfLife): linear 0→1, guarded against len==1 divide-by-zero.
 	recency := make([]float64, len(all))
-	for i := range all {
-		recency[i] = float64(i) / float64(len(all)-1)
+	if h.decayEnabled && h.decayHalfLife > 0 {
+		now := time.Now()
+		for i, m := range all {
+			ageHours := now.Sub(m.Timestamp).Hours()
+			if ageHours < 0 {
+				ageHours = 0
+			}
+			recency[i] = math.Exp(-ageHours * math.Ln2 / h.decayHalfLife)
+		}
+	} else {
+		n := len(all) - 1
+		for i := range all {
+			if n > 0 {
+				recency[i] = float64(i) / float64(n)
+			} else {
+				recency[i] = 1
+			}
+		}
 	}
 
 	// Combine BM25 and recency signals.

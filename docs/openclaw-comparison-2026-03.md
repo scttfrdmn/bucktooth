@@ -1,7 +1,7 @@
 # BuckTooth vs OpenClaw — Feature Gap Analysis
 
 **Date**: 2026-03-18
-**BuckTooth version**: v0.10.0
+**BuckTooth version**: v0.11.0
 **OpenClaw version**: v2026.3.13 (released 2026-03-14)
 
 OpenClaw ([github.com/openclaw/openclaw](https://github.com/openclaw/openclaw)) is a TypeScript/Node.js
@@ -16,7 +16,7 @@ runtime profile (single binary, low memory, Kubernetes-native).
 | Attribute | BuckTooth | OpenClaw |
 |-----------|-----------|---------|
 | Language | Go | TypeScript / Node.js ≥22 |
-| Version | v0.10.0 | v2026.3.13 |
+| Version | v0.11.0 | v2026.3.13 |
 | Binary | Single static binary (~25 MB) | Node.js runtime required |
 | License | Apache 2.0 | MIT |
 | Helm chart | ✅ | ❌ |
@@ -32,7 +32,8 @@ runtime profile (single binary, low memory, Kubernetes-native).
 | Slack (Socket Mode) | ✅ | ✅ |
 | Telegram (long-polling) | ✅ | ✅ |
 | WhatsApp (whatsmeow) | ✅ | ✅ |
-| Microsoft Teams | ❌ | ✅ |
+| Microsoft Teams | ✅ v0.9.0 | ✅ |
+| Teams HMAC activity validation | ✅ v0.11.0 | N/A |
 | Signal | ❌ | ✅ |
 | iMessage (BlueBubbles) | ❌ | ✅ |
 | Matrix / IRC / LINE | ❌ | ✅ |
@@ -40,8 +41,7 @@ runtime profile (single binary, low memory, Kubernetes-native).
 | Twitch / Nostr / Feishu | ❌ | ✅ |
 | Google Chat / Zalo | ❌ | ✅ |
 
-OpenClaw supports 24+ channels. The highest-value gaps are **Teams** (enterprise) and
-**Signal** (private users).
+OpenClaw supports 24+ channels. Highest-value remaining gap: **Signal** (private users).
 
 ---
 
@@ -58,6 +58,8 @@ OpenClaw supports 24+ channels. The highest-value gaps are **Teams** (enterprise
 | LiteLLM proxy | ✅ `adapter/llm/litellm.go` | ✅ v0.6.0 |
 | LLM retry / exponential backoff | — | ✅ v0.10.0 |
 | LLM provider fallback chain | — | ✅ v0.10.0 |
+| Streaming responses (WS token streaming) | ✅ | ✅ v0.11.0 |
+| OpenAI-compatible completions endpoint | — | ✅ v0.11.0 |
 
 ---
 
@@ -72,9 +74,9 @@ OpenClaw supports 24+ channels. The highest-value gaps are **Teams** (enterprise
 | Semantic search (cosine) | ✅ `MemoryVectorStore` | ✅ v0.6.0 | ✅ |
 | Hybrid BM25 + vector | ❌ | ✅ v0.9.0 | ✅ |
 | SQLite persistence | — | ✅ v0.8.0 | ❌ |
-| Memory summarization | — | ✅ v0.8.0 | ✅ |
-| Temporal decay / recency boost | ❌ | ❌ | ✅ |
-| Automatic context compaction | ❌ | ❌ | ✅ |
+| Memory summarization (message count) | — | ✅ v0.8.0 | ✅ |
+| Token-based compaction trigger | — | ✅ v0.11.0 | ✅ |
+| Temporal decay / recency boost | ❌ | ✅ v0.11.0 | ✅ |
 
 ---
 
@@ -108,6 +110,8 @@ OpenClaw supports 24+ channels. The highest-value gaps are **Teams** (enterprise
 | Channel-aware markdown formatting | ✅ v0.10.0 | ✅ | ✅ |
 | LLM provider fallback chain | ✅ v0.10.0 | ✅ | ✅ |
 | Attachment auto-routing to tools | ✅ v0.10.0 | ✅ | ✅ |
+| Streaming responses (WS) | ✅ v0.11.0 | ✅ | ✅ |
+| OpenAI-compatible completions API | ✅ v0.11.0 | ✅ | ✅ |
 
 ---
 
@@ -148,6 +152,7 @@ ClawHub compatibility requires matching the SKILL.md dependency-checking layer.
 | Dashboard Basic auth | ✅ v0.5.0 | ✅ |
 | Gateway API bearer token | ✅ v0.6.0 | ✅ (required by default) |
 | Webhook HMAC verification | ✅ v0.8.0 | ✅ |
+| Teams HMAC activity validation | ✅ v0.11.0 | N/A |
 | Rate limiting (per-user token bucket) | ✅ v0.9.0 | ✅ |
 | Message deduplication | ✅ v0.10.0 | ✅ |
 | Device pairing with approval | ❌ | ✅ |
@@ -177,22 +182,19 @@ Companion apps and voice are out of scope for a Go gateway.
 
 ---
 
-## Priority Matrix (post-v0.10.0)
+## Priority Matrix (post-v0.11.0)
 
-### Medium effort, high ROI
-1. **Microsoft Teams channel** — highest-value missing channel for enterprise
-2. **ClawHub compatibility layer** — SKILL.md dependency checking on top of existing MCP support
-3. **Temporal memory decay** — recency boost for more relevant context retrieval
+### Medium effort, high ROI — v0.12.x
+1. **ClawHub compatibility layer** — SKILL.md dependency checking on top of existing MCP support
+2. **Browser automation (Chrome CDP)** — headless browser tool
 
-### Larger investments
-4. **Signal channel** — libsignal complexity
-5. **Browser automation (Chrome CDP)** — headless browser tool
-6. **Streaming responses** — requires WebSocket protocol changes + agenkit streaming support
+### Larger investments — v1.0.0+
+3. **Signal channel** — libsignal complexity, device pairing
+4. **ClawMetry equivalent** — purpose-built observability dashboard
 
 ### Out of scope for BuckTooth core
 - Companion macOS/iOS/Android native apps
 - Voice Wake / Talk Mode
-- ClawMetry equivalent dashboard product
 
 ---
 

@@ -536,6 +536,142 @@ store:
 	return responseText, nil
 }
 
+// ChunkWriter sends one token chunk to the caller. Return non-nil to abort streaming.
+type ChunkWriter func(chunk string) error
+
+// StreamMessage processes msg and calls chunkFn for each token chunk.
+// For conversational mode it uses llmRaw.Stream() for real token-by-token streaming.
+// For ReAct, planning, or /plan-prefixed messages it falls back to ProcessMessage
+// and emits the complete response as a single chunk (simulated stream).
+func (ar *AgentRouter) StreamMessage(ctx context.Context, msg *channels.Message, chunkFn ChunkWriter) error {
+	// Rate limit check.
+	if ar.rateLimiter != nil && !ar.rateLimiter.Allow(msg.UserID) {
+		return fmt.Errorf("rate limit exceeded: please slow down")
+	}
+
+	// /system command — handle before routing.
+	if strings.HasPrefix(msg.Content, "/system") {
+		response, err := ar.handleSystemCommand(msg, msg.Content)
+		if err != nil {
+			return err
+		}
+		return chunkFn(response)
+	}
+
+	// ReAct, planning, and /plan modes cannot stream mid-tool-call; simulate.
+	if strings.HasPrefix(msg.Content, "/plan ") && ar.registry != nil {
+		response, err := ar.ProcessMessage(ctx, msg)
+		if err != nil {
+			return err
+		}
+		return chunkFn(response)
+	}
+	if ar.config.Mode == "planning" && ar.registry != nil {
+		response, err := ar.ProcessMessage(ctx, msg)
+		if err != nil {
+			return err
+		}
+		return chunkFn(response)
+	}
+	if ar.registry != nil && ar.registry.Enabled() {
+		response, err := ar.ProcessMessage(ctx, msg)
+		if err != nil {
+			return err
+		}
+		return chunkFn(response)
+	}
+
+	// Conversational streaming via llmRaw.Stream().
+	return ar.streamConversational(ctx, msg, chunkFn)
+}
+
+// streamConversational calls llmRaw.Stream() directly and feeds tokens to chunkFn.
+// It respects the user's custom system prompt, skill injection, attachment processing,
+// and persists the turn to memory + triggers the summarizer.
+func (ar *AgentRouter) streamConversational(ctx context.Context, msg *channels.Message, chunkFn ChunkWriter) error {
+	// Prepend attachment analysis when enabled.
+	content := msg.Content
+	if ar.gatewayConfig.AutoProcessAttachments && len(msg.Attachments) > 0 {
+		if prefix := ar.processAttachments(ctx, msg); prefix != "" {
+			content = prefix + content
+		}
+	}
+
+	// Resolve system prompt (user override or default).
+	prompt := systemPrompt
+	if ar.userPrefs != nil {
+		if custom := ar.userPrefs.GetSystemPrompt(msg.UserID); custom != "" {
+			prompt = custom
+		}
+	}
+
+	// Load conversation history.
+	history, err := ar.memoryStore.GetHistory(ctx, msg.UserID, ar.config.MaxHistory)
+	if err != nil {
+		return fmt.Errorf("streamConversational: get history: %w", err)
+	}
+
+	// Build messages: [system, ...history, user].
+	messages := make([]*agenkit.Message, 0, len(history)+2)
+	messages = append(messages, &agenkit.Message{Role: "system", Content: prompt})
+	for _, m := range history {
+		messages = append(messages, &agenkit.Message{
+			Role:      m.Role,
+			Content:   m.Content,
+			Timestamp: m.Timestamp,
+		})
+	}
+	userMsg := ar.maybeInjectSkills(&agenkit.Message{
+		Role:    "user",
+		Content: content,
+	})
+	messages = append(messages, userMsg)
+
+	// Call Stream() on the underlying LLM.
+	stream, err := ar.llmRaw.Stream(ctx, messages)
+	if err != nil {
+		return fmt.Errorf("streamConversational: stream: %w", err)
+	}
+
+	// Relay chunks to the caller while collecting the full response.
+	var fullResponse strings.Builder
+	for chunk := range stream {
+		text := chunk.ContentString()
+		if text == "" {
+			continue
+		}
+		fullResponse.WriteString(text)
+		if err := chunkFn(text); err != nil {
+			return err
+		}
+	}
+
+	responseText := fullResponse.String()
+
+	// Persist turn to memory.
+	if err := ar.memoryStore.AddMessage(ctx, msg.UserID, memory.Message{
+		Role:      "user",
+		Content:   msg.Content,
+		Timestamp: msg.Timestamp,
+	}); err != nil {
+		ar.logger.Error().Err(err).Msg("streamConversational: failed to store user message")
+	}
+	if err := ar.memoryStore.AddMessage(ctx, msg.UserID, memory.Message{
+		Role:      "assistant",
+		Content:   responseText,
+		Timestamp: time.Now(),
+	}); err != nil {
+		ar.logger.Error().Err(err).Msg("streamConversational: failed to store assistant message")
+	}
+
+	// Trigger async summarization if enabled.
+	if ar.summarizer != nil {
+		ar.summarizer.MaybeSummarize(ctx, msg.UserID)
+	}
+
+	return nil
+}
+
 // Close cleans up resources
 func (ar *AgentRouter) Close() error {
 	return nil

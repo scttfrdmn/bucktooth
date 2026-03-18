@@ -18,6 +18,9 @@ package teams
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -41,10 +44,11 @@ const botScope = "https://api.botframework.com/.default"
 // TeamsChannel implements the channels.Channel interface for Microsoft Teams.
 type TeamsChannel struct {
 	*channels.BaseChannel
-	appID       string
-	appPassword string
-	logger      zerolog.Logger
-	httpClient  *http.Client
+	appID         string
+	appPassword   string
+	securityToken string // optional; when non-empty, inbound activities must carry a valid HMAC-SHA256 signature
+	logger        zerolog.Logger
+	httpClient    *http.Client
 
 	// tokenMu guards accessToken and tokenExpiry.
 	tokenMu     sync.Mutex
@@ -60,15 +64,41 @@ func NewTeamsChannel(cfg config.ChannelConfig, logger zerolog.Logger) (*TeamsCha
 		return nil, fmt.Errorf("teams: app_id and app_password are required")
 	}
 
+	securityToken, _ := cfg.Auth["security_token"].(string)
+
 	base := channels.NewBaseChannel("teams", logger, 100)
 
 	return &TeamsChannel{
-		BaseChannel: base,
-		appID:       appID,
-		appPassword: appPassword,
-		logger:      logger.With().Str("channel", "teams").Logger(),
-		httpClient:  &http.Client{Timeout: 15 * time.Second},
+		BaseChannel:   base,
+		appID:         appID,
+		appPassword:   appPassword,
+		securityToken: securityToken,
+		logger:        logger.With().Str("channel", "teams").Logger(),
+		httpClient:    &http.Client{Timeout: 15 * time.Second},
 	}, nil
+}
+
+// validateHMAC checks the Bot Framework outgoing-webhook HMAC-SHA256 signature.
+// The Authorization header must be "HMAC <base64-encoded-signature>" where the
+// signature is HMAC-SHA256(body, securityToken).
+// Returns true when securityToken is empty (opt-in, backward compatible).
+func (t *TeamsChannel) validateHMAC(r *http.Request, body []byte) bool {
+	if t.securityToken == "" {
+		return true
+	}
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "HMAC ") {
+		return false
+	}
+	sigB64 := strings.TrimPrefix(auth, "HMAC ")
+	sig, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(t.securityToken))
+	mac.Write(body)
+	expected := mac.Sum(nil)
+	return hmac.Equal(sig, expected)
 }
 
 // Connect marks the channel as connected. Actual message reception is driven
@@ -166,6 +196,19 @@ func (t *TeamsChannel) HandleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read body once so it can be used for both HMAC validation and JSON decoding.
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1 MiB limit
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate HMAC signature when a security token is configured.
+	if !t.validateHMAC(r, body) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	var activity struct {
 		Type string `json:"type"`
 		ID   string `json:"id"`
@@ -180,7 +223,7 @@ func (t *TeamsChannel) HandleMessage(w http.ResponseWriter, r *http.Request) {
 		ServiceURL string `json:"serviceUrl"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&activity); err != nil {
+	if err := json.Unmarshal(body, &activity); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}

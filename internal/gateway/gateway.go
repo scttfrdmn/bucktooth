@@ -107,7 +107,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 		if weight == 0 {
 			weight = 0.5
 		}
-		memStore = memory.NewHybridStore(embedProvider, weight)
+		memStore = memory.NewHybridStore(embedProvider, weight, cfg.Memory.DecayEnabled, cfg.Memory.DecayHalfLifeHours)
 	case "sqlite":
 		opts := cfg.Memory.Options
 		dbPath, _ := opts["path"].(string)
@@ -183,7 +183,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 		if threshold <= 0 {
 			threshold = 30
 		}
-		summarizer := memory.NewSummarizer(memStore, llmInstance, threshold, logger)
+		summarizer := memory.NewSummarizer(memStore, llmInstance, threshold, cfg.Memory.SummarizeTokenThreshold, logger)
 		agentRouter.SetSummarizer(summarizer)
 		logger.Info().Int("threshold", threshold).Msg("memory summarizer enabled")
 	}
@@ -224,7 +224,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 	httpServer.SetScheduler(scheduler)
 
 	// Create WebSocket server
-	wsServer := NewWebSocketServer(cfg.Gateway.WebSocketPort, cfg.Gateway.AllowedWSOrigins, agentRouter, logger)
+	wsServer := NewWebSocketServer(cfg.Gateway.WebSocketPort, cfg.Gateway.AllowedWSOrigins, agentRouter, cfg.Gateway.StreamingEnabled, logger)
 
 	// Create chunker (enabled by default).
 	var chunker *Chunker

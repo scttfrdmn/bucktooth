@@ -49,8 +49,9 @@ type GatewayConfig struct {
 	TestChannel           bool           `yaml:"test_channel"`
 	DashboardAuthPassword string         `yaml:"dashboard_auth_password"`
 	APIToken              string         `yaml:"api_token"`          // optional; if set, all non-probe routes require Bearer auth
-	AllowedWSOrigins      []string       `yaml:"allowed_ws_origins"` // nil = allow all (dev)
-	ChunkingEnabled       bool           `yaml:"chunking_enabled"`   // default true
+	AllowedWSOrigins      []string       `yaml:"allowed_ws_origins"`  // nil = allow all (dev)
+	StreamingEnabled      bool           `yaml:"streaming_enabled"`   // enables WS token streaming; default false
+	ChunkingEnabled       bool           `yaml:"chunking_enabled"`    // default true
 	ChunkingLimits        map[string]int `yaml:"chunking_limits"`    // per-channel-type char limits (overrides defaults)
 	DedupEnabled          bool           `yaml:"dedup_enabled"`      // default true
 	DedupWindowSize       int            `yaml:"dedup_window_size"`  // ring buffer size, default 256
@@ -127,11 +128,14 @@ type ToolConfig struct {
 
 // MemoryConfig configures memory storage
 type MemoryConfig struct {
-	Type               string         `yaml:"type"` // "inmemory", "redis", "vector", "sqlite", or "hybrid"
-	Options            map[string]any `yaml:"options"`
-	SummarizeEnabled   bool           `yaml:"summarize_enabled"`
-	SummarizeThreshold int            `yaml:"summarize_threshold"` // default 30
-	HybridWeight       float64        `yaml:"hybrid_weight"`       // 0.0=pure semantic, 1.0=pure BM25; default 0.5
+	Type                    string         `yaml:"type"` // "inmemory", "redis", "vector", "sqlite", or "hybrid"
+	Options                 map[string]any `yaml:"options"`
+	SummarizeEnabled        bool           `yaml:"summarize_enabled"`
+	SummarizeThreshold      int            `yaml:"summarize_threshold"`       // default 30
+	SummarizeTokenThreshold int            `yaml:"summarize_token_threshold"` // trigger on est. token count; 0=disabled
+	HybridWeight            float64        `yaml:"hybrid_weight"`             // 0.0=pure semantic, 1.0=pure BM25; default 0.5
+	DecayEnabled            bool           `yaml:"decay_enabled"`             // exponential time-based recency decay; default false
+	DecayHalfLifeHours      float64        `yaml:"decay_half_life_hours"`     // half-life in hours; default 24.0
 }
 
 // SkillsConfig configures the agent skills system.
@@ -199,6 +203,7 @@ func DefaultConfig() *Config {
 			Type:               "inmemory",
 			SummarizeThreshold: 30,
 			HybridWeight:       0.5,
+			DecayHalfLifeHours: 24.0,
 		},
 		RateLimit: RateLimitConfig{
 			Enabled:           false,

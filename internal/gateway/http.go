@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
@@ -410,6 +411,209 @@ func (h *HTTPServer) handleCronJobs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// --- OpenAI-compatible completions types ---
+
+type openAIChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type openAICompletionRequest struct {
+	Model       string              `json:"model"`
+	Messages    []openAIChatMessage `json:"messages"`
+	Stream      bool                `json:"stream"`
+	Temperature *float64            `json:"temperature,omitempty"`
+	MaxTokens   *int                `json:"max_tokens,omitempty"`
+	User        string              `json:"user,omitempty"` // per-caller user ID for memory isolation
+}
+
+type openAIChoice struct {
+	Index        int               `json:"index"`
+	Message      openAIChatMessage `json:"message"`
+	FinishReason string            `json:"finish_reason"`
+}
+
+type openAIUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+type openAICompletionResponse struct {
+	ID      string         `json:"id"`
+	Object  string         `json:"object"`
+	Created int64          `json:"created"`
+	Model   string         `json:"model"`
+	Choices []openAIChoice `json:"choices"`
+	Usage   openAIUsage    `json:"usage"`
+}
+
+type openAIStreamDelta struct {
+	Role    string `json:"role,omitempty"`
+	Content string `json:"content,omitempty"`
+}
+
+type openAIStreamChoice struct {
+	Index        int               `json:"index"`
+	Delta        openAIStreamDelta `json:"delta"`
+	FinishReason *string           `json:"finish_reason"`
+}
+
+type openAIStreamChunk struct {
+	ID      string               `json:"id"`
+	Object  string               `json:"object"`
+	Created int64                `json:"created"`
+	Model   string               `json:"model"`
+	Choices []openAIStreamChoice `json:"choices"`
+}
+
+// chatCompletionID generates a unique "chatcmpl-…" ID for a completion response.
+func chatCompletionID() string {
+	b := make([]byte, 12)
+	_, _ = rand.Read(b)
+	return "chatcmpl-" + base64.RawURLEncoding.EncodeToString(b)
+}
+
+// handleCompletions implements the OpenAI-compatible POST /v1/chat/completions endpoint.
+// Both non-streaming (JSON body) and streaming (SSE) modes are supported.
+// Requests are routed through the AgentRouter so they share memory, skills, and formatting.
+func (h *HTTPServer) handleCompletions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req openAICompletionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	// Extract last user-role message as the content to process.
+	content := ""
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if strings.EqualFold(req.Messages[i].Role, "user") {
+			content = req.Messages[i].Content
+			break
+		}
+	}
+	if content == "" {
+		http.Error(w, "no user message found in messages array", http.StatusBadRequest)
+		return
+	}
+
+	userID := req.User
+	if userID == "" {
+		userID = "completions-api"
+	}
+
+	chanMsg := &channels.Message{
+		UserID:    userID,
+		ChannelID: "completions",
+		Content:   content,
+		Timestamp: time.Now(),
+	}
+
+	model := req.Model
+	if model == "" {
+		model = "bucktooth"
+	}
+	completionID := chatCompletionID()
+	created := time.Now().Unix()
+
+	if req.Stream {
+		// SSE streaming — disable the server's per-response write deadline so long
+		// streams aren't killed by the 10s WriteTimeout.
+		rc := http.NewResponseController(w)
+		_ = rc.SetWriteDeadline(time.Time{})
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		chunkFn := func(chunk string) error {
+			sc := openAIStreamChunk{
+				ID:      completionID,
+				Object:  "chat.completion.chunk",
+				Created: created,
+				Model:   model,
+				Choices: []openAIStreamChoice{{
+					Index: 0,
+					Delta: openAIStreamDelta{Content: chunk},
+				}},
+			}
+			data, _ := json.Marshal(sc)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+				return err
+			}
+			flusher.Flush()
+			return nil
+		}
+
+		if h.agentRouter != nil {
+			if err := h.agentRouter.StreamMessage(r.Context(), chanMsg, chunkFn); err != nil {
+				h.logger.Error().Err(err).Msg("completions stream error")
+				// Best-effort error event before [DONE]
+				errChunk := openAIStreamChunk{
+					ID: completionID, Object: "chat.completion.chunk",
+					Created: created, Model: model,
+					Choices: []openAIStreamChoice{{
+						Index: 0,
+						Delta: openAIStreamDelta{Content: "[error: " + err.Error() + "]"},
+					}},
+				}
+				data, _ := json.Marshal(errChunk)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
+			}
+		}
+
+		_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+		return
+	}
+
+	// Non-streaming path.
+	var responseText string
+	if h.agentRouter != nil {
+		var err error
+		responseText, err = h.agentRouter.ProcessMessage(r.Context(), chanMsg)
+		if err != nil {
+			h.logger.Error().Err(err).Msg("completions error")
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	resp := openAICompletionResponse{
+		ID:      completionID,
+		Object:  "chat.completion",
+		Created: created,
+		Model:   model,
+		Choices: []openAIChoice{{
+			Index:        0,
+			Message:      openAIChatMessage{Role: "assistant", Content: responseText},
+			FinishReason: "stop",
+		}},
+		Usage: openAIUsage{
+			PromptTokens:     len(content) / 4,
+			CompletionTokens: len(responseText) / 4,
+			TotalTokens:      (len(content) + len(responseText)) / 4,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode completions response")
+	}
+}
+
 // Start starts the HTTP server
 func (h *HTTPServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
@@ -447,6 +651,9 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/admin/memory/", h.handleAdminMemoryFlush)
 	mux.HandleFunc("/admin/skills/reload", h.handleAdminSkillsReload)
 	mux.HandleFunc("/admin/channels/health", h.handleAdminChannelsHealth)
+
+	// OpenAI-compatible completions endpoint (Bearer-token protected when configured)
+	mux.HandleFunc("/v1/chat/completions", h.handleCompletions)
 
 	// Programmatically registered extra routes (e.g. test channel)
 	for pattern, handler := range h.extraRoutes {
