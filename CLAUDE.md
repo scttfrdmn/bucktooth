@@ -62,6 +62,22 @@ make deps           # go mod download && go mod tidy
 - **v0.3.0 - Platform Expansion** — Telegram, Slack, planning agent, observability
 - **v1.0.0 - Production Ready** — Docker, Kubernetes, web dashboard, CLI
 
+## CRITICAL: Parity Tracking
+
+**Every milestone plan must include a gap audit against OpenClaw and RustyNail.**
+
+BuckTooth tracks feature parity with two sibling projects:
+- **RustyNail** — Rust implementation of the same gateway (same version cadence)
+- **OpenClaw** — Reference implementation / ClawHub ecosystem standard
+
+Before proposing or planning any milestone:
+1. Run a gap audit: identify features in RustyNail and OpenClaw that BuckTooth lacks.
+2. Include a parity section in the milestone plan listing gaps, their effort/value ratio, and which are targeted for this sprint vs deferred.
+3. Create GitHub issues with label `type:enhancement` and reference the sibling project (e.g. "parity: RustyNail v0.8.0").
+4. The comparison doc lives at `docs/openclaw-comparison-2026-03.md` — update it when parity changes.
+
+**Do not plan a milestone without a gap audit first.**
+
 ## Architecture
 
 ```
