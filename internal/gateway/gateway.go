@@ -17,6 +17,7 @@ import (
 	"github.com/scttfrdmn/bucktooth/internal/channels/testchan"
 	"github.com/scttfrdmn/bucktooth/internal/config"
 	"github.com/scttfrdmn/bucktooth/internal/memory"
+	"github.com/scttfrdmn/bucktooth/internal/observability"
 	"github.com/scttfrdmn/bucktooth/internal/tools"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -90,82 +91,32 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 			optStr(opts, "embedding_model"),
 		)
 		memStore = memory.NewVectorStore(embedProvider)
+	case "sqlite":
+		opts := cfg.Memory.Options
+		dbPath, _ := opts["path"].(string)
+		if dbPath == "" {
+			dbPath = "~/.bucktooth/memory.db"
+		}
+		maxHistory := 50
+		if v, ok := opts["max_history"].(int); ok && v > 0 {
+			maxHistory = v
+		}
+		sqliteStore, err := memory.NewSQLiteStore(dbPath, maxHistory)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to create SQLite memory store: %w", err)
+		}
+		memStore = sqliteStore
 	default:
 		cancel()
 		return nil, fmt.Errorf("unsupported memory type: %s", cfg.Memory.Type)
 	}
 
 	// Build tool registry from config
-	toolRegistry := tools.NewRegistry()
-	if cfg.Tools.Calculator.Enabled {
-		toolRegistry.Register(tools.NewCalculatorTool())
-		logger.Info().Msg("calculator tool registered")
-	}
-	if cfg.Tools.Message.Enabled {
-		toolRegistry.Register(tools.NewMessageFormatterTool())
-		logger.Info().Msg("message_formatter tool registered")
-	}
-	if cfg.Tools.FileSystem.Enabled {
-		opts := cfg.Tools.FileSystem.Options
-		sandboxDir, _ := opts["sandbox_dir"].(string)
-		maxFileSize := int64(0)
-		if v, ok := opts["max_file_size"].(int); ok {
-			maxFileSize = int64(v)
-		}
-		fsTool, err := tools.NewFilesystemTool(sandboxDir, maxFileSize)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("failed to create filesystem tool: %w", err)
-		}
-		toolRegistry.Register(fsTool)
-		logger.Info().Str("sandbox", sandboxDir).Msg("filesystem tool registered")
-	}
-
-	if cfg.Tools.WebSearch.Enabled {
-		apiKey, _ := cfg.Tools.WebSearch.Options["api_key"].(string)
-		maxResults := 5
-		if v, ok := cfg.Tools.WebSearch.Options["max_results"].(int); ok && v > 0 {
-			maxResults = v
-		}
-		toolRegistry.Register(tools.NewWebSearchTool(apiKey, maxResults))
-		logger.Info().Msg("web_search tool registered")
-	}
-
-	if cfg.Tools.WebFetch.Enabled {
-		maxBytes := 0
-		if v, ok := cfg.Tools.WebFetch.Options["max_bytes"].(int); ok {
-			maxBytes = v
-		}
-		toolRegistry.Register(tools.NewWebFetchTool(maxBytes))
-		logger.Info().Msg("web_fetch tool registered")
-	}
-
-	if cfg.Tools.Shell.Enabled {
-		requireApproval := true
-		if v, ok := cfg.Tools.Shell.Options["require_approval"].(bool); ok {
-			requireApproval = v
-		}
-		var allowedCmds []string
-		if v, ok := cfg.Tools.Shell.Options["allowed_commands"].([]any); ok {
-			for _, item := range v {
-				if s, ok := item.(string); ok {
-					allowedCmds = append(allowedCmds, s)
-				}
-			}
-		}
-		toolRegistry.Register(tools.NewShellTool(requireApproval, allowedCmds))
-		logger.Info().Bool("require_approval", requireApproval).Msg("shell tool registered")
-	}
-
-	if cfg.Tools.Calendar.Enabled {
-		storePath, _ := cfg.Tools.Calendar.Options["store_path"].(string)
-		calTool, err := tools.NewCalendarTool(storePath)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("failed to create calendar tool: %w", err)
-		}
-		toolRegistry.Register(calTool)
-		logger.Info().Str("store", storePath).Msg("calendar tool registered")
+	toolRegistry, err := tools.FromConfig(cfg.Tools, logger)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to create tool registry: %w", err)
 	}
 
 	// Connect to configured MCP servers and register their tools.
@@ -194,11 +145,23 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 	stats := NewStats()
 
 	// Create agent router
-	agentRouter, err := NewAgentRouter(cfg.Agents, memStore, toolRegistry, stats, logger)
+	agentRouter, llmInstance, err := NewAgentRouter(cfg.Agents, cfg.Skills, memStore, toolRegistry, stats, logger)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create agent router: %w", err)
 	}
+
+	// Wire memory summarizer if enabled.
+	if cfg.Memory.SummarizeEnabled && llmInstance != nil {
+		threshold := cfg.Memory.SummarizeThreshold
+		if threshold <= 0 {
+			threshold = 30
+		}
+		summarizer := memory.NewSummarizer(memStore, llmInstance, threshold, logger)
+		agentRouter.SetSummarizer(summarizer)
+		logger.Info().Int("threshold", threshold).Msg("memory summarizer enabled")
+	}
+
 	userPrefs := NewUserPrefs()
 
 	// Create channel registry
@@ -211,6 +174,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 	httpServer.SetAPIToken(cfg.Gateway.APIToken)
 	httpServer.SetVersion(readVersionFile())
 	httpServer.SetUserPrefs(userPrefs)
+	httpServer.SetSkillRegistry(agentRouter.SkillRegistry())
 
 	// Register test channel routes and channel before the gateway struct is created.
 	if cfg.Gateway.TestChannel {
@@ -509,13 +473,18 @@ func (g *Gateway) handleMessageReceived(ctx context.Context, event Event) {
 		return
 	}
 
+	start := time.Now()
+
 	tracer := otel.Tracer("bucktooth/gateway")
 	ctx, span := tracer.Start(ctx, "gateway.handle_message",
 		trace.WithAttributes(
 			attribute.String("channel", msg.ChannelID),
 			attribute.String("user_id", msg.UserID),
 		))
-	defer span.End()
+	defer func() {
+		span.End()
+		observability.MessageDurationSeconds.Observe(time.Since(start).Seconds())
+	}()
 
 	g.logger.Debug().
 		Str("channel", msg.ChannelID).

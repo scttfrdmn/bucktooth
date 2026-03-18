@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-18
+
+### Added
+- Agent skills system: `skills.enabled` config + `BUCKTOOTH_SKILLS_PATH` env var; skill instructions injected into every message via `<available_skills>` block; `GET /skills` API endpoint lists loaded skills (#43)
+- SQLite persistent memory backend (`memory.type: sqlite`) using pure-Go `modernc.org/sqlite`; default path `~/.bucktooth/memory.db` (#41)
+- Async LLM-driven conversation summarization: `memory.summarize_enabled` / `memory.summarize_threshold`; compresses histories above threshold into a single system summary message (#44)
+- Prometheus latency histogram `bucktooth_message_duration_seconds`; `bucktooth_messages_total`, `bucktooth_tokens_total` counter vecs; `bucktooth_active_users` gauge (#42)
+- Grafana dashboard JSON (`configs/grafana-dashboard.json`) with message rate, p50/p95/p99 latency, token usage, and active-users panels (#42)
+- Prometheus alert rules (`configs/alerting-rules.yml`): `HighLatency`, `ChannelUnhealthy`, `HighErrorRate`, `GatewayDown` (#42)
+- `bucktooth mcp serve` subcommand: exposes registered tools as an MCP stdio server (#45)
+- `bucktooth completion [bash|zsh|fish|powershell]` subcommand (#39)
+- Webhook HMAC-SHA256 verification middleware (`internal/channels/webhook`) for Teams and future webhook channels (#40)
+
+### Changed
+- Tool registration extracted from `gateway.go` into `internal/tools/from_config.go` (`tools.FromConfig`) — used by both the gateway and `mcp serve` (#45)
+
 ## [0.7.0] - 2026-03-18
 
 ### Added

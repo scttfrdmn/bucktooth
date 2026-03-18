@@ -3,6 +3,8 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -10,10 +12,12 @@ import (
 	"github.com/scttfrdmn/agenkit/agenkit-go/adapter/llm"
 	"github.com/scttfrdmn/agenkit/agenkit-go/agenkit"
 	"github.com/scttfrdmn/agenkit/agenkit-go/patterns"
+	"github.com/scttfrdmn/agenkit/agenkit-go/skills"
 	"github.com/scttfrdmn/bucktooth/internal/agents"
 	"github.com/scttfrdmn/bucktooth/internal/channels"
 	"github.com/scttfrdmn/bucktooth/internal/config"
 	"github.com/scttfrdmn/bucktooth/internal/memory"
+	"github.com/scttfrdmn/bucktooth/internal/observability"
 	"github.com/scttfrdmn/bucktooth/internal/tools"
 	"go.opentelemetry.io/otel"
 )
@@ -22,15 +26,18 @@ const systemPrompt = "You are a helpful AI assistant. You are friendly, concise,
 
 // AgentRouter routes messages to appropriate agents
 type AgentRouter struct {
-	userAgents   map[string]*patterns.ConversationalAgent
-	userAgentsMu sync.RWMutex
-	llmClient    *llmClientAdapter // stored for lazy per-user agent creation
-	llmRaw       llm.LLM
-	registry     *tools.Registry
-	memoryStore  memory.Store
-	stats        *Stats
-	logger       zerolog.Logger
-	config       config.AgentConfig
+	userAgents      map[string]*patterns.ConversationalAgent
+	userAgentsMu    sync.RWMutex
+	llmClient       *llmClientAdapter // stored for lazy per-user agent creation
+	llmRaw          llm.LLM
+	registry        *tools.Registry
+	memoryStore     memory.Store
+	stats           *Stats
+	logger          zerolog.Logger
+	config          config.AgentConfig
+	skillRegistry   *skills.SkillRegistry
+	skillsMaxActive int
+	summarizer      *memory.Summarizer
 }
 
 // llmClientAdapter wraps an LLM to implement the patterns.LLMClient interface
@@ -56,8 +63,9 @@ func (a *llmAgent) Process(ctx context.Context, msg *agenkit.Message) (*agenkit.
 	return a.llm.Complete(ctx, []*agenkit.Message{msg})
 }
 
-// NewAgentRouter creates a new agent router
-func NewAgentRouter(cfg config.AgentConfig, memStore memory.Store, registry *tools.Registry, stats *Stats, logger zerolog.Logger) (*AgentRouter, error) {
+// NewAgentRouter creates a new agent router. It returns the router, the
+// underlying llm.LLM instance (for use by the summarizer), and any error.
+func NewAgentRouter(cfg config.AgentConfig, skillsCfg config.SkillsConfig, memStore memory.Store, registry *tools.Registry, stats *Stats, logger zerolog.Logger) (*AgentRouter, llm.LLM, error) {
 	var llmInstance llm.LLM
 	switch cfg.LLMProvider {
 	case "stub":
@@ -75,7 +83,7 @@ func NewAgentRouter(cfg config.AgentConfig, memStore memory.Store, registry *too
 	case "gemini":
 		g, err := llm.NewGeminiLLM(cfg.APIKey, cfg.LLMModel)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create Gemini LLM: %w", err)
+			return nil, nil, fmt.Errorf("failed to create Gemini LLM: %w", err)
 		}
 		llmInstance = g
 	case "ollama":
@@ -85,16 +93,16 @@ func NewAgentRouter(cfg config.AgentConfig, memStore memory.Store, registry *too
 	case "bedrock":
 		b, err := llm.NewBedrockLLM(context.Background(), llm.BedrockConfig{ModelID: cfg.LLMModel})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create Bedrock LLM: %w", err)
+			return nil, nil, fmt.Errorf("failed to create Bedrock LLM: %w", err)
 		}
 		llmInstance = b
 	default:
-		return nil, fmt.Errorf("unsupported LLM provider: %s", cfg.LLMProvider)
+		return nil, nil, fmt.Errorf("unsupported LLM provider: %s", cfg.LLMProvider)
 	}
 
 	llmClient := &llmClientAdapter{llm: llmInstance}
 
-	return &AgentRouter{
+	ar := &AgentRouter{
 		userAgents:  make(map[string]*patterns.ConversationalAgent),
 		llmClient:   llmClient,
 		llmRaw:      llmInstance,
@@ -103,7 +111,77 @@ func NewAgentRouter(cfg config.AgentConfig, memStore memory.Store, registry *too
 		stats:       stats,
 		logger:      logger.With().Str("component", "router").Logger(),
 		config:      cfg,
-	}, nil
+	}
+
+	// Initialise skill registry if enabled.
+	if skillsCfg.Enabled {
+		searchPaths := make([]string, len(skillsCfg.SearchPaths))
+		for i, p := range skillsCfg.SearchPaths {
+			if strings.HasPrefix(p, "~/") {
+				if home, err := os.UserHomeDir(); err == nil {
+					p = filepath.Join(home, p[2:])
+				}
+			}
+			searchPaths[i] = p
+		}
+		reg := skills.NewSkillRegistry(searchPaths)
+		if err := reg.DiscoverSkills(); err != nil {
+			logger.Warn().Err(err).Msg("skill discovery returned error (non-fatal)")
+		}
+		discovered := reg.All()
+		ar.skillRegistry = reg
+		ar.skillsMaxActive = skillsCfg.MaxActiveSkills
+		if ar.skillsMaxActive <= 0 {
+			ar.skillsMaxActive = 3
+		}
+		logger.Info().Int("skills", len(discovered)).Msg("skill registry initialised")
+	}
+
+	return ar, llmInstance, nil
+}
+
+// SkillRegistry returns the router's skill registry (may be nil if skills are disabled).
+func (ar *AgentRouter) SkillRegistry() *skills.SkillRegistry {
+	return ar.skillRegistry
+}
+
+// SetSummarizer attaches a memory Summarizer that is called after each message turn.
+func (ar *AgentRouter) SetSummarizer(s *memory.Summarizer) {
+	ar.summarizer = s
+}
+
+// maybeInjectSkills prepends relevant skill instructions to the message content
+// when skills are enabled. Returns the original message unchanged if no skills
+// are loaded or no relevant skills are found for the query.
+func (ar *AgentRouter) maybeInjectSkills(msg *agenkit.Message) *agenkit.Message {
+	if ar.skillRegistry == nil {
+		return msg
+	}
+	query := msg.ContentString()
+	relevant := ar.skillRegistry.FindRelevantSkills(query, ar.skillsMaxActive)
+	if len(relevant) == 0 {
+		return msg
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<available_skills>\n")
+	for _, s := range relevant {
+		sb.WriteString(s.ToPrompt())
+		sb.WriteString("\n")
+	}
+	sb.WriteString("</available_skills>\n\n")
+	sb.WriteString(query)
+
+	enhanced := &agenkit.Message{
+		Role:      msg.Role,
+		Content:   sb.String(),
+		Timestamp: msg.Timestamp,
+		Metadata:  make(map[string]interface{}),
+	}
+	for k, v := range msg.Metadata {
+		enhanced.Metadata[k] = v
+	}
+	return enhanced
 }
 
 // extractTokenUsage reads input/output token counts from an agenkit Message's metadata.
@@ -177,7 +255,7 @@ func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message
 	// /plan prefix: activate planning agent for this message regardless of global mode.
 	if strings.HasPrefix(content, "/plan ") && ar.registry != nil {
 		planContent := strings.TrimPrefix(content, "/plan ")
-		agentMessage = &agenkit.Message{Role: "user", Content: planContent}
+		agentMessage = ar.maybeInjectSkills(&agenkit.Message{Role: "user", Content: planContent})
 		executor := agents.NewToolStepExecutor(ar.registry, ar.llmRaw)
 		llmClient := &llmClientAdapter{llm: ar.llmRaw}
 		planAgent := agents.NewBuckToothPlanningAgent(llmClient, executor, 10)
@@ -200,7 +278,7 @@ func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message
 		executor := agents.NewToolStepExecutor(ar.registry, ar.llmRaw)
 		llmClient := &llmClientAdapter{llm: ar.llmRaw}
 		planAgent := agents.NewBuckToothPlanningAgent(llmClient, executor, 10)
-		response, err := planAgent.Process(ctx, agentMessage)
+		response, err := planAgent.Process(ctx, ar.maybeInjectSkills(agentMessage))
 		if err != nil {
 			ar.logger.Error().Err(err).Msg("planning agent failed")
 			return "", fmt.Errorf("agent processing failed: %w", err)
@@ -227,7 +305,7 @@ func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message
 			goto conversational
 		}
 
-		response, err := reactAgent.Process(ctx, agentMessage)
+		response, err := reactAgent.Process(ctx, ar.maybeInjectSkills(agentMessage))
 		if err != nil {
 			ar.logger.Error().Err(err).Msg("ReActAgent processing failed")
 			return "", fmt.Errorf("agent processing failed: %w", err)
@@ -245,7 +323,7 @@ conversational:
 	{
 		// Plain conversational path — each user gets their own isolated agent instance.
 		agent := ar.getOrCreateAgent(msg.UserID)
-		response, err := agent.Process(ctx, agentMessage)
+		response, err := agent.Process(ctx, ar.maybeInjectSkills(agentMessage))
 		if err != nil {
 			ar.logger.Error().Err(err).Msg("agent processing failed")
 			return "", fmt.Errorf("agent processing failed: %w", err)
@@ -275,6 +353,14 @@ store:
 	}); err != nil {
 		ar.logger.Error().Err(err).Msg("failed to store assistant message")
 	}
+
+	// Trigger async summarization if enabled.
+	if ar.summarizer != nil {
+		ar.summarizer.MaybeSummarize(ctx, msg.UserID)
+	}
+
+	// Update active users Prometheus gauge.
+	observability.ActiveUsers.Set(float64(ar.ActiveUsers()))
 
 	ar.logger.Info().
 		Str("user_id", msg.UserID).

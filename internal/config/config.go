@@ -12,6 +12,7 @@ type Config struct {
 	Tools         ToolsConfig              `yaml:"tools"`
 	MCP           MCPConfig                `yaml:"mcp"`
 	Memory        MemoryConfig             `yaml:"memory"`
+	Skills        SkillsConfig             `yaml:"skills"`
 	Observability ObservabilityConfig      `yaml:"observability"`
 }
 
@@ -88,8 +89,17 @@ type ToolConfig struct {
 
 // MemoryConfig configures memory storage
 type MemoryConfig struct {
-	Type    string         `yaml:"type"` // "inmemory", "redis", or "vector"
-	Options map[string]any `yaml:"options"`
+	Type               string         `yaml:"type"` // "inmemory", "redis", "vector", or "sqlite"
+	Options            map[string]any `yaml:"options"`
+	SummarizeEnabled   bool           `yaml:"summarize_enabled"`
+	SummarizeThreshold int            `yaml:"summarize_threshold"` // default 30
+}
+
+// SkillsConfig configures the agent skills system.
+type SkillsConfig struct {
+	Enabled         bool     `yaml:"enabled"`
+	SearchPaths     []string `yaml:"search_paths"`
+	MaxActiveSkills int      `yaml:"max_active_skills"`
 }
 
 // ObservabilityConfig configures metrics and tracing
@@ -142,7 +152,13 @@ func DefaultConfig() *Config {
 			},
 		},
 		Memory: MemoryConfig{
-			Type: "inmemory",
+			Type:               "inmemory",
+			SummarizeThreshold: 30,
+		},
+		Skills: SkillsConfig{
+			Enabled:         false,
+			SearchPaths:     []string{"~/.bucktooth/skills", "./skills"},
+			MaxActiveSkills: 3,
 		},
 		Observability: ObservabilityConfig{
 			Metrics: MetricsConfig{

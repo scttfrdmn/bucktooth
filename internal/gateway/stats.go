@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/scttfrdmn/bucktooth/internal/channels"
+	"github.com/scttfrdmn/bucktooth/internal/observability"
 )
 
 const recentMessageCap = 50
@@ -38,6 +39,7 @@ func NewStats() *Stats {
 // RecordInbound increments the inbound counter and adds an entry to the ring buffer.
 func (s *Stats) RecordInbound(msg *channels.Message) {
 	s.messagesIn.Add(1)
+	observability.MessagesTotal.WithLabelValues("in").Inc()
 	s.addRecent(RecentMessage{
 		Timestamp: time.Now(),
 		ChannelID: msg.ChannelID,
@@ -50,6 +52,7 @@ func (s *Stats) RecordInbound(msg *channels.Message) {
 // RecordOutbound increments the outbound counter and adds an entry to the ring buffer.
 func (s *Stats) RecordOutbound(msg *channels.Message) {
 	s.messagesOut.Add(1)
+	observability.MessagesTotal.WithLabelValues("out").Inc()
 	s.addRecent(RecentMessage{
 		Timestamp: time.Now(),
 		ChannelID: msg.ChannelID,
@@ -63,6 +66,12 @@ func (s *Stats) RecordOutbound(msg *channels.Message) {
 func (s *Stats) RecordTokens(in, out uint64) {
 	s.tokensIn.Add(in)
 	s.tokensOut.Add(out)
+	if in > 0 {
+		observability.TokensTotal.WithLabelValues("in").Add(float64(in))
+	}
+	if out > 0 {
+		observability.TokensTotal.WithLabelValues("out").Add(float64(out))
+	}
 }
 
 func (s *Stats) addRecent(r RecentMessage) {

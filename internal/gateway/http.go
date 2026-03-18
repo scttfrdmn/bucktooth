@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog"
+	"github.com/scttfrdmn/agenkit/agenkit-go/skills"
 	"github.com/scttfrdmn/bucktooth/internal/channels"
 )
 
@@ -43,6 +44,9 @@ type HTTPServer struct {
 
 	// Version string for /dashboard/data
 	version string
+
+	// Skill registry for GET /skills (nil when skills are disabled)
+	skillRegistry *skills.SkillRegistry
 
 	// Extra routes registered before server start
 	extraRoutes map[string]http.Handler
@@ -113,6 +117,11 @@ func (h *HTTPServer) SetVersion(v string) {
 // SetUserPrefs attaches the UserPrefs store for the preferences API.
 func (h *HTTPServer) SetUserPrefs(up *UserPrefs) {
 	h.userPrefs = up
+}
+
+// SetSkillRegistry attaches the skill registry for the GET /skills endpoint.
+func (h *HTTPServer) SetSkillRegistry(r *skills.SkillRegistry) {
+	h.skillRegistry = r
 }
 
 // Handle registers an additional route before the server starts.
@@ -250,6 +259,28 @@ func (h *HTTPServer) handleDashboardData(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+// handleSkills returns a JSON list of all loaded agent skills.
+func (h *HTTPServer) handleSkills(w http.ResponseWriter, r *http.Request) {
+	type skillInfo struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	var list []skillInfo
+	if h.skillRegistry != nil {
+		all := h.skillRegistry.All()
+		list = make([]skillInfo, len(all))
+		for i, s := range all {
+			list[i] = skillInfo{Name: s.Name, Description: s.Description}
+		}
+	} else {
+		list = []skillInfo{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]any{"skills": list, "count": len(list)}); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode skills response")
+	}
+}
+
 // handleUserPreferences handles GET and POST for /users/{user_id}/preferences.
 func (h *HTTPServer) handleUserPreferences(w http.ResponseWriter, r *http.Request) {
 	// Path: /users/{user_id}/preferences
@@ -327,6 +358,9 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 
 	// User preferences API
 	mux.HandleFunc("/users/", h.handleUserPreferences)
+
+	// Skills listing
+	mux.HandleFunc("/skills", h.handleSkills)
 
 	// Programmatically registered extra routes (e.g. test channel)
 	for pattern, handler := range h.extraRoutes {

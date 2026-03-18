@@ -70,6 +70,12 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.Gateway.APIToken = v
 	}
 
+	// Skills overrides
+	if v := os.Getenv("BUCKTOOTH_SKILLS_PATH"); v != "" {
+		cfg.Skills.SearchPaths = strings.Split(v, ":")
+		cfg.Skills.Enabled = true
+	}
+
 	// Channel-specific overrides
 	if token := os.Getenv("DISCORD_BOT_TOKEN"); token != "" {
 		if cfg.Channels["discord"].Auth == nil {

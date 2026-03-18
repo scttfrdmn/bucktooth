@@ -1,0 +1,44 @@
+groups:
+  - name: bucktooth
+    rules:
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, rate(bucktooth_message_duration_seconds_bucket[5m])) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "BuckTooth p95 message latency is above 10s"
+          description: "p95 latency is {{ $value | humanizeDuration }} (threshold 10s)"
+
+      - alert: ChannelUnhealthy
+        expr: up{job="bucktooth"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "BuckTooth gateway is down"
+          description: "No scrape data from BuckTooth for more than 1 minute"
+
+      - alert: HighErrorRate
+        expr: |
+          rate(bucktooth_messages_total{direction="in"}[5m]) > 0
+          and
+          (
+            rate(bucktooth_messages_total{direction="out"}[5m])
+            / rate(bucktooth_messages_total{direction="in"}[5m])
+          ) < 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "BuckTooth high error rate (fewer than 50% of inbound messages produce a response)"
+          description: "Response ratio is {{ $value | humanizePercentage }}"
+
+      - alert: GatewayDown
+        expr: absent(bucktooth_messages_total)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "BuckTooth gateway metrics are absent"
+          description: "No bucktooth_messages_total metric for over 5 minutes — gateway may be down"
