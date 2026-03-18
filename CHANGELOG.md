@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-17
+
+### Added
+- Enhanced CLI with cobra: `start`, `status`, `config validate`, `version` subcommands; shell completion auto-provided by cobra (#17)
+- Web dashboard at `/` (embedded, no build step) with live WebSocket feed at `/api/ws` showing message and channel events in real time (#18)
+- Multi-stage distroless Dockerfile; `bucktooth status` used as `HEALTHCHECK CMD` (#15)
+- `docker-compose.yml` with BuckTooth + Redis (appendonly, health-checked) (#15)
+- Helm chart `charts/bucktooth/` with Deployment, Service, ConfigMap, Secret, Ingress, HPA templates (#16)
+- Benchmark suite in `bench/` covering EventBus, InMemoryStore, HTTPServer, and Config parse (#20)
+- `docs/benchmarks.md` — methodology and baseline results table (#20)
+- `docs/migration.md` — OpenClaw → BuckTooth feature comparison and step-by-step migration guide (#19)
+- `docs/docker.md` — Docker quick start, env var table, Redis memory config (#15)
+
+### Changed
+- `BINARY_NAME` and `MAIN_PATH` in Makefile updated to `bucktooth` / `./cmd/bucktooth`
+- `run-debug` Makefile target updated to `start --log-level debug`
+- `bench` Makefile target scoped to `./bench/...` with `-benchtime=5s`
+- `docker-compose-up` and `docker-compose-down` targets added to Makefile
+
+### Removed
+- `cmd/gateway/main.go` — replaced by `cmd/bucktooth/`
+
 ## [0.3.0] - 2026-03-17
 
 ### Added
@@ -72,7 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent processing overhead: ~2ms
 - Target throughput: 1,000 messages/second (Phase 4 goal)
 
-[unreleased]: https://github.com/scttfrdmn/bucktooth/compare/v0.3.0...HEAD
+[unreleased]: https://github.com/scttfrdmn/bucktooth/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/scttfrdmn/bucktooth/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/scttfrdmn/bucktooth/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/scttfrdmn/bucktooth/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/scttfrdmn/bucktooth/releases/tag/v0.1.0
