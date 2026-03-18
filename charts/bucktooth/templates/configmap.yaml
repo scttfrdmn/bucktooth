@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "bucktooth.fullname" . }}-config
+  labels:
+    {{- include "bucktooth.labels" . | nindent 4 }}
+data:
+  gateway.yaml: |
+    gateway:
+      http_port: {{ .Values.service.httpPort }}
+      websocket_port: {{ .Values.service.wsPort }}
+      log_level: {{ .Values.config.gateway.log_level }}
+      shutdown_timeout: {{ .Values.config.gateway.shutdown_timeout }}
+    agents:
+      llm_provider: {{ .Values.config.agents.llm_provider }}
+      llm_model: {{ .Values.config.agents.llm_model }}
+      api_key: ${ANTHROPIC_API_KEY}
+      max_history: {{ .Values.config.agents.max_history }}
+      temperature: {{ .Values.config.agents.temperature }}
+      max_tokens: {{ .Values.config.agents.max_tokens }}
+      mode: {{ .Values.config.agents.mode }}
+    memory:
+      type: {{ .Values.config.memory.type }}
+      options:
+        addr: {{ .Values.config.memory.options.addr }}
+        ttl: {{ .Values.config.memory.options.ttl }}
+        max_history: {{ .Values.config.memory.options.max_history }}
+    channels:
+      discord:
+        enabled: {{ .Values.config.channels.discord.enabled }}
+        auth:
+          token: ${DISCORD_BOT_TOKEN}
+      telegram:
+        enabled: {{ .Values.config.channels.telegram.enabled }}
+        auth:
+          token: ${TELEGRAM_BOT_TOKEN}
+      slack:
+        enabled: {{ .Values.config.channels.slack.enabled }}
+        auth:
+          bot_token: ${SLACK_BOT_TOKEN}
+          app_token: ${SLACK_APP_TOKEN}
+      whatsapp:
+        enabled: {{ .Values.config.channels.whatsapp.enabled }}
+    tools:
+      calculator:
+        enabled: {{ .Values.config.tools.calculator.enabled }}
+      message:
+        enabled: {{ .Values.config.tools.message.enabled }}
+      filesystem:
+        enabled: {{ .Values.config.tools.filesystem.enabled }}
+      websearch:
+        enabled: {{ .Values.config.tools.websearch.enabled }}
+        options:
+          api_key: ${BRAVE_SEARCH_API_KEY}
+      calendar:
+        enabled: {{ .Values.config.tools.calendar.enabled }}

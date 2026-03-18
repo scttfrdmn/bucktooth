@@ -1,0 +1,116 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/scttfrdmn/bucktooth
+  pullPolicy: IfNotPresent
+  # Defaults to appVersion when empty
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  httpPort: 8080
+  wsPort: 18789
+
+config:
+  gateway:
+    log_level: info
+    shutdown_timeout: 30s
+  agents:
+    llm_provider: anthropic
+    llm_model: claude-sonnet-4-5-20250220
+    max_history: 20
+    temperature: 0.7
+    max_tokens: 4096
+    mode: react
+  memory:
+    type: redis
+    options:
+      addr: redis:6379
+      ttl: 24h
+      max_history: 50
+  channels:
+    discord:
+      enabled: false
+    telegram:
+      enabled: false
+    slack:
+      enabled: false
+    whatsapp:
+      enabled: false
+  tools:
+    calculator:
+      enabled: true
+    message:
+      enabled: true
+    filesystem:
+      enabled: false
+    websearch:
+      enabled: false
+    calendar:
+      enabled: false
+
+secrets:
+  anthropicApiKey: ""
+  discordBotToken: ""
+  telegramBotToken: ""
+  slackBotToken: ""
+  slackAppToken: ""
+  braveSearchApiKey: ""
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  port: 6379
+  persistence:
+    enabled: true
+    size: 1Gi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: bucktooth.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 15
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podAnnotations: {}
+podSecurityContext: {}
+securityContext: {}
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
