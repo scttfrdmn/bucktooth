@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BuckTooth Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>BuckTooth</h1>
+    <span id="conn-badge" class="badge badge-disconnected">disconnected</span>
+  </header>
+
+  <main>
+    <section class="card-grid" id="channels-grid">
+      <!-- channel cards injected by JS -->
+    </section>
+
+    <section class="stats-row">
+      <div class="stat-card">
+        <span class="stat-label">Messages</span>
+        <span class="stat-value" id="msg-counter">0</span>
+      </div>
+    </section>
+
+    <section class="feed-section">
+      <h2>Live Feed</h2>
+      <ul id="feed-list">
+        <!-- feed items prepended by JS -->
+      </ul>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

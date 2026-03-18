@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog"
 	"github.com/scttfrdmn/bucktooth/internal/channels"
@@ -18,6 +20,12 @@ type HTTPServer struct {
 	server          *http.Server
 	channelRegistry *channels.ChannelRegistry
 	logger          zerolog.Logger
+
+	// Dashboard WebSocket hub
+	dashClients  map[*websocket.Conn]bool
+	dashMu       sync.RWMutex
+	dashUpgrader websocket.Upgrader
+	staticFiles  http.Handler
 }
 
 // NewHTTPServer creates a new HTTP server
@@ -26,12 +34,69 @@ func NewHTTPServer(port int, registry *channels.ChannelRegistry, logger zerolog.
 		port:            port,
 		channelRegistry: registry,
 		logger:          logger.With().Str("component", "http").Logger(),
+		dashClients: make(map[*websocket.Conn]bool),
+		dashUpgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool { return true },
+		},
+	}
+}
+
+// SetStaticFiles sets the handler used to serve the embedded web dashboard.
+func (h *HTTPServer) SetStaticFiles(fs http.Handler) {
+	h.staticFiles = fs
+}
+
+// BroadcastEvent sends payload to all connected dashboard WebSocket clients.
+func (h *HTTPServer) BroadcastEvent(payload []byte) {
+	h.dashMu.RLock()
+	defer h.dashMu.RUnlock()
+
+	for conn := range h.dashClients {
+		if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+			h.logger.Debug().Err(err).Msg("dashboard ws write error")
+		}
+	}
+}
+
+// handleDashWS upgrades the HTTP connection to a dashboard WebSocket.
+func (h *HTTPServer) handleDashWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := h.dashUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("failed to upgrade dashboard ws connection")
+		return
+	}
+
+	h.dashMu.Lock()
+	h.dashClients[conn] = true
+	h.dashMu.Unlock()
+
+	h.logger.Debug().Str("remote", r.RemoteAddr).Msg("dashboard client connected")
+
+	defer func() {
+		h.dashMu.Lock()
+		delete(h.dashClients, conn)
+		h.dashMu.Unlock()
+		conn.Close()
+		h.logger.Debug().Str("remote", r.RemoteAddr).Msg("dashboard client disconnected")
+	}()
+
+	// Read loop — we only handle close/ping frames; clients don't send data.
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			break
+		}
 	}
 }
 
 // Start starts the HTTP server
 func (h *HTTPServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
+
+	// Dashboard static files and WebSocket
+	if h.staticFiles != nil {
+		mux.Handle("/", h.staticFiles)
+	}
+	mux.HandleFunc("/api/ws", h.handleDashWS)
 
 	// Health check endpoint
 	mux.HandleFunc("/health", h.handleHealth)
@@ -66,6 +131,14 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 		h.logger.Info().Msg("shutting down HTTP server")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+
+		// Close dashboard clients
+		h.dashMu.Lock()
+		for conn := range h.dashClients {
+			conn.Close()
+		}
+		h.dashMu.Unlock()
+
 		return h.server.Shutdown(shutdownCtx)
 	case err := <-errChan:
 		return err
@@ -123,7 +196,6 @@ func (h *HTTPServer) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
-		// Create response writer wrapper to capture status code
 		wrapper := &responseWriterWrapper{ResponseWriter: w, statusCode: http.StatusOK}
 
 		next.ServeHTTP(wrapper, r)

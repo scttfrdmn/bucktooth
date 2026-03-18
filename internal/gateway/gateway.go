@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -15,6 +16,14 @@ import (
 	"github.com/scttfrdmn/bucktooth/internal/memory"
 	"github.com/scttfrdmn/bucktooth/internal/tools"
 )
+
+// dashboardEvent is the wire struct sent to dashboard WebSocket clients.
+type dashboardEvent struct {
+	Type      string `json:"type"`
+	ChannelID string `json:"channel_id"`
+	Content   string `json:"content,omitempty"`
+	Timestamp string `json:"timestamp"`
+}
 
 // Gateway is the main application gateway
 type Gateway struct {
@@ -131,6 +140,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 
 	// Create HTTP server
 	httpServer := NewHTTPServer(cfg.Gateway.HTTPPort, channelRegistry, logger)
+	httpServer.SetStaticFiles(webFileServer())
 
 	// Create WebSocket server
 	wsServer := NewWebSocketServer(cfg.Gateway.WebSocketPort, logger)
@@ -150,6 +160,19 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 
 	// Subscribe to message events
 	eventBus.Subscribe(EventTypeMessageReceived, g.handleMessageReceived)
+
+	// Subscribe to all events for dashboard broadcast
+	for _, et := range []EventType{
+		EventTypeMessageReceived,
+		EventTypeMessageSent,
+		EventTypeChannelConnected,
+		EventTypeChannelDisconnected,
+		EventTypeAgentStarted,
+		EventTypeAgentCompleted,
+		EventTypeAgentError,
+	} {
+		eventBus.Subscribe(et, g.broadcastToDashboard)
+	}
 
 	return g, nil
 }
@@ -289,6 +312,32 @@ func (g *Gateway) receiveMessages(channel channels.Channel, msgChan <-chan *chan
 			g.eventBus.Publish(g.ctx, MessageReceivedEvent(msg))
 		}
 	}
+}
+
+// broadcastToDashboard marshals an event and sends it to all dashboard WS clients.
+func (g *Gateway) broadcastToDashboard(ctx context.Context, event Event) {
+	content := ""
+	if event.Message != nil {
+		content = event.Message.Content
+	}
+	if r, ok := event.Data["response"].(string); ok && content == "" {
+		content = r
+	}
+
+	wire := dashboardEvent{
+		Type:      string(event.Type),
+		ChannelID: event.ChannelID,
+		Content:   content,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	payload, err := json.Marshal(wire)
+	if err != nil {
+		g.logger.Error().Err(err).Msg("failed to marshal dashboard event")
+		return
+	}
+
+	g.httpServer.BroadcastEvent(payload)
 }
 
 // handleMessageReceived processes received messages
