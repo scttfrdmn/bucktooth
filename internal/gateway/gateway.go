@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/scttfrdmn/agenkit/agenkit-go/agenkit"
+	"github.com/scttfrdmn/agenkit/agenkit-go/protocols/mcp"
 	"github.com/scttfrdmn/bucktooth/internal/channels"
 	"github.com/scttfrdmn/bucktooth/internal/channels/testchan"
 	"github.com/scttfrdmn/bucktooth/internal/config"
@@ -40,6 +42,7 @@ type Gateway struct {
 	wsServer        *WebSocketServer
 	stats           *Stats
 	userPrefs       *UserPrefs
+	mcpClients      []mcp.MCPClient
 	logger          zerolog.Logger
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -79,6 +82,14 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 			return nil, fmt.Errorf("failed to create Redis memory store: %w", err)
 		}
 		memStore = redisStore
+	case "vector":
+		opts := cfg.Memory.Options
+		embedProvider := memory.NewOpenAIEmbeddingProvider(
+			optStr(opts, "embedding_base_url"),
+			optStr(opts, "embedding_api_key"),
+			optStr(opts, "embedding_model"),
+		)
+		memStore = memory.NewVectorStore(embedProvider)
 	default:
 		cancel()
 		return nil, fmt.Errorf("unsupported memory type: %s", cfg.Memory.Type)
@@ -120,6 +131,32 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 		logger.Info().Msg("web_search tool registered")
 	}
 
+	if cfg.Tools.WebFetch.Enabled {
+		maxBytes := 0
+		if v, ok := cfg.Tools.WebFetch.Options["max_bytes"].(int); ok {
+			maxBytes = v
+		}
+		toolRegistry.Register(tools.NewWebFetchTool(maxBytes))
+		logger.Info().Msg("web_fetch tool registered")
+	}
+
+	if cfg.Tools.Shell.Enabled {
+		requireApproval := true
+		if v, ok := cfg.Tools.Shell.Options["require_approval"].(bool); ok {
+			requireApproval = v
+		}
+		var allowedCmds []string
+		if v, ok := cfg.Tools.Shell.Options["allowed_commands"].([]any); ok {
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					allowedCmds = append(allowedCmds, s)
+				}
+			}
+		}
+		toolRegistry.Register(tools.NewShellTool(requireApproval, allowedCmds))
+		logger.Info().Bool("require_approval", requireApproval).Msg("shell tool registered")
+	}
+
 	if cfg.Tools.Calendar.Enabled {
 		storePath, _ := cfg.Tools.Calendar.Options["store_path"].(string)
 		calTool, err := tools.NewCalendarTool(storePath)
@@ -131,18 +168,37 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 		logger.Info().Str("store", storePath).Msg("calendar tool registered")
 	}
 
+	// Connect to configured MCP servers and register their tools.
+	var mcpClients []mcp.MCPClient
+	for _, srv := range cfg.MCP.Servers {
+		client, mcpTools, err := connectMCPServer(ctx, srv, logger)
+		if err != nil {
+			// Non-fatal: log and skip the server so the gateway still starts.
+			logger.Error().Err(err).Str("mcp_server", srv.Name).Msg("failed to connect to MCP server")
+			continue
+		}
+		mcpClients = append(mcpClients, client)
+		for _, t := range mcpTools {
+			toolRegistry.Register(t)
+		}
+		logger.Info().
+			Str("mcp_server", srv.Name).
+			Int("tools", len(mcpTools)).
+			Msg("MCP server connected")
+	}
+
 	// Create event bus
 	eventBus := NewEventBus(logger)
 
+	// Create stats and user preferences store
+	stats := NewStats()
+
 	// Create agent router
-	agentRouter, err := NewAgentRouter(cfg.Agents, memStore, toolRegistry, logger)
+	agentRouter, err := NewAgentRouter(cfg.Agents, memStore, toolRegistry, stats, logger)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create agent router: %w", err)
 	}
-
-	// Create stats and user preferences store
-	stats := NewStats()
 	userPrefs := NewUserPrefs()
 
 	// Create channel registry
@@ -152,6 +208,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 	httpServer := NewHTTPServer(cfg.Gateway.HTTPPort, channelRegistry, agentRouter, stats, logger)
 	httpServer.SetStaticFiles(webFileServer())
 	httpServer.SetDashboardAuth(cfg.Gateway.DashboardAuthPassword)
+	httpServer.SetAPIToken(cfg.Gateway.APIToken)
 	httpServer.SetVersion(readVersionFile())
 	httpServer.SetUserPrefs(userPrefs)
 
@@ -177,6 +234,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 		wsServer:        wsServer,
 		stats:           stats,
 		userPrefs:       userPrefs,
+		mcpClients:      mcpClients,
 		logger:          logger.With().Str("component", "gateway").Logger(),
 		ctx:             ctx,
 		cancel:          cancel,
@@ -282,6 +340,13 @@ func (g *Gateway) Stop() error {
 		g.logger.Warn().Msg("shutdown timeout exceeded")
 	}
 
+	// Close MCP clients
+	for _, client := range g.mcpClients {
+		if err := client.Close(); err != nil {
+			g.logger.Error().Err(err).Msg("failed to close MCP client")
+		}
+	}
+
 	// Close resources
 	if err := g.agentRouter.Close(); err != nil {
 		g.logger.Error().Err(err).Msg("failed to close agent router")
@@ -351,6 +416,55 @@ func (g *Gateway) receiveMessages(channel channels.Channel, msgChan <-chan *chan
 			g.eventBus.Publish(g.ctx, MessageReceivedEvent(msg))
 		}
 	}
+}
+
+// connectMCPServer connects to a single MCP server and returns the client and its tools.
+func connectMCPServer(ctx context.Context, srv config.MCPServerConfig, logger zerolog.Logger) (mcp.MCPClient, []agenkit.Tool, error) {
+	var client mcp.MCPClient
+	switch srv.Type {
+	case "stdio":
+		c, err := mcp.NewStdioClient(ctx, mcp.StdioConfig{
+			Command: srv.Command,
+			Args:    srv.Args,
+			Env:     srv.Env,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("mcp stdio connect: %w", err)
+		}
+		client = c
+	case "http":
+		c, err := mcp.NewHTTPClient(ctx, srv.URL)
+		if err != nil {
+			return nil, nil, fmt.Errorf("mcp http connect: %w", err)
+		}
+		client = c
+	default:
+		return nil, nil, fmt.Errorf("unknown MCP server type %q (want \"stdio\" or \"http\")", srv.Type)
+	}
+
+	mcpTools, err := mcp.ToolsFromClient(ctx, client)
+	if err != nil {
+		_ = client.Close()
+		return nil, nil, fmt.Errorf("list MCP tools: %w", err)
+	}
+
+	info := client.ServerInfo()
+	logger.Debug().
+		Str("mcp_server", srv.Name).
+		Str("server_name", info.Name).
+		Str("server_version", info.Version).
+		Msg("MCP handshake complete")
+
+	return client, mcpTools, nil
+}
+
+// optStr safely extracts a string value from a map[string]any by key.
+func optStr(opts map[string]any, key string) string {
+	if opts == nil {
+		return ""
+	}
+	v, _ := opts[key].(string)
+	return v
 }
 
 // readVersionFile reads the VERSION file from the working directory; returns "dev" on failure.

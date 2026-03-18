@@ -10,18 +10,42 @@ type Config struct {
 	Channels      map[string]ChannelConfig `yaml:"channels"`
 	Agents        AgentConfig              `yaml:"agents"`
 	Tools         ToolsConfig              `yaml:"tools"`
+	MCP           MCPConfig                `yaml:"mcp"`
 	Memory        MemoryConfig             `yaml:"memory"`
 	Observability ObservabilityConfig      `yaml:"observability"`
 }
 
+// MCPConfig configures MCP (Model Context Protocol) server connections.
+type MCPConfig struct {
+	Servers []MCPServerConfig `yaml:"servers"`
+}
+
+// MCPServerConfig configures a single MCP server connection.
+type MCPServerConfig struct {
+	// Name is a friendly label used in log messages.
+	Name string `yaml:"name"`
+	// Type is "stdio" (spawn a subprocess) or "http" (connect over HTTP JSON-RPC).
+	Type string `yaml:"type"`
+	// Command is the executable to spawn (stdio only).
+	Command string `yaml:"command"`
+	// Args are the arguments passed to Command (stdio only).
+	Args []string `yaml:"args"`
+	// Env contains additional KEY=VALUE environment variables for the subprocess (stdio only).
+	// If empty the subprocess inherits the parent environment.
+	Env []string `yaml:"env"`
+	// URL is the base URL of the MCP HTTP server (http only).
+	URL string `yaml:"url"`
+}
+
 // GatewayConfig configures the gateway server
 type GatewayConfig struct {
-	WebSocketPort        int           `yaml:"websocket_port"`
-	HTTPPort             int           `yaml:"http_port"`
-	LogLevel             string        `yaml:"log_level"`
-	ShutdownTimeout      time.Duration `yaml:"shutdown_timeout"`
-	TestChannel          bool          `yaml:"test_channel"`
-	DashboardAuthPassword string       `yaml:"dashboard_auth_password"`
+	WebSocketPort         int           `yaml:"websocket_port"`
+	HTTPPort              int           `yaml:"http_port"`
+	LogLevel              string        `yaml:"log_level"`
+	ShutdownTimeout       time.Duration `yaml:"shutdown_timeout"`
+	TestChannel           bool          `yaml:"test_channel"`
+	DashboardAuthPassword string        `yaml:"dashboard_auth_password"`
+	APIToken              string        `yaml:"api_token"` // optional; if set, all non-probe routes require Bearer auth
 }
 
 // ChannelConfig configures a messaging channel
@@ -50,8 +74,10 @@ type ToolsConfig struct {
 	Calendar   ToolConfig `yaml:"calendar"`
 	FileSystem ToolConfig `yaml:"filesystem"`
 	WebSearch  ToolConfig `yaml:"websearch"`
+	WebFetch   ToolConfig `yaml:"webfetch"`
 	Calculator ToolConfig `yaml:"calculator"`
 	Message    ToolConfig `yaml:"message"`
+	Shell      ToolConfig `yaml:"shell"`
 }
 
 // ToolConfig configures a specific tool
@@ -62,7 +88,7 @@ type ToolConfig struct {
 
 // MemoryConfig configures memory storage
 type MemoryConfig struct {
-	Type    string         `yaml:"type"` // "inmemory" or "redis"
+	Type    string         `yaml:"type"` // "inmemory", "redis", or "vector"
 	Options map[string]any `yaml:"options"`
 }
 

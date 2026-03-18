@@ -17,6 +17,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -25,6 +26,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/scttfrdmn/bucktooth/internal/channels/discord"
 	slackchan "github.com/scttfrdmn/bucktooth/internal/channels/slack"
+	teamschan "github.com/scttfrdmn/bucktooth/internal/channels/teams"
 	telegramchan "github.com/scttfrdmn/bucktooth/internal/channels/telegram"
 	"github.com/scttfrdmn/bucktooth/internal/channels/whatsapp"
 	"github.com/scttfrdmn/bucktooth/internal/config"
@@ -130,6 +132,17 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 		gw.RegisterChannel(slackChannel)
 		logger.Info().Msg("Slack channel registered")
+	}
+
+	if cfg.Channels["teams"].Enabled {
+		teamsChannel, err := teamschan.NewTeamsChannel(cfg.Channels["teams"], logger)
+		if err != nil {
+			return fmt.Errorf("failed to create Teams channel: %w", err)
+		}
+
+		gw.RegisterChannel(teamsChannel)
+		gw.Handle("/channels/teams/messages", http.HandlerFunc(teamsChannel.HandleMessage))
+		logger.Info().Msg("Teams channel registered")
 	}
 
 	// Start gateway

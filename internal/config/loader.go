@@ -66,6 +66,9 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("DASHBOARD_AUTH_PASSWORD"); v != "" {
 		cfg.Gateway.DashboardAuthPassword = v
 	}
+	if v := os.Getenv("BUCKTOOTH_API_TOKEN"); v != "" {
+		cfg.Gateway.APIToken = v
+	}
 
 	// Channel-specific overrides
 	if token := os.Getenv("DISCORD_BOT_TOKEN"); token != "" {

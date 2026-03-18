@@ -28,6 +28,7 @@ type AgentRouter struct {
 	llmRaw       llm.LLM
 	registry     *tools.Registry
 	memoryStore  memory.Store
+	stats        *Stats
 	logger       zerolog.Logger
 	config       config.AgentConfig
 }
@@ -56,17 +57,37 @@ func (a *llmAgent) Process(ctx context.Context, msg *agenkit.Message) (*agenkit.
 }
 
 // NewAgentRouter creates a new agent router
-func NewAgentRouter(cfg config.AgentConfig, memStore memory.Store, registry *tools.Registry, logger zerolog.Logger) (*AgentRouter, error) {
+func NewAgentRouter(cfg config.AgentConfig, memStore memory.Store, registry *tools.Registry, stats *Stats, logger zerolog.Logger) (*AgentRouter, error) {
 	var llmInstance llm.LLM
 	switch cfg.LLMProvider {
 	case "stub":
 		llmInstance = NewStubLLM(cfg.StubResponse)
 	case "anthropic":
-		// TODO: pass cfg.APIBase to agenkit when it exposes a base URL option
+		opts := []llm.AnthropicOption{}
 		if cfg.APIBase != "" {
-			logger.Info().Str("api_base", cfg.APIBase).Msg("ANTHROPIC_API_BASE configured; pending agenkit-go support to activate")
+			opts = append(opts, llm.WithBaseURL(cfg.APIBase))
 		}
-		llmInstance = llm.NewAnthropicLLM(cfg.APIKey, cfg.LLMModel)
+		llmInstance = llm.NewAnthropicLLM(cfg.APIKey, cfg.LLMModel, opts...)
+	case "openai":
+		llmInstance = llm.NewOpenAILLM(cfg.APIKey, cfg.LLMModel)
+	case "openai-compatible":
+		llmInstance = llm.NewOpenAICompatibleLLM(cfg.APIBase, cfg.LLMModel, "openai-compatible", cfg.APIKey)
+	case "gemini":
+		g, err := llm.NewGeminiLLM(cfg.APIKey, cfg.LLMModel)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Gemini LLM: %w", err)
+		}
+		llmInstance = g
+	case "ollama":
+		llmInstance = llm.NewOllamaLLM(cfg.LLMModel, cfg.APIBase)
+	case "litellm":
+		llmInstance = llm.NewLiteLLMLLMWithAuth(cfg.APIBase, cfg.LLMModel, cfg.APIKey)
+	case "bedrock":
+		b, err := llm.NewBedrockLLM(context.Background(), llm.BedrockConfig{ModelID: cfg.LLMModel})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Bedrock LLM: %w", err)
+		}
+		llmInstance = b
 	default:
 		return nil, fmt.Errorf("unsupported LLM provider: %s", cfg.LLMProvider)
 	}
@@ -79,9 +100,29 @@ func NewAgentRouter(cfg config.AgentConfig, memStore memory.Store, registry *too
 		llmRaw:      llmInstance,
 		registry:    registry,
 		memoryStore: memStore,
+		stats:       stats,
 		logger:      logger.With().Str("component", "router").Logger(),
 		config:      cfg,
 	}, nil
+}
+
+// extractTokenUsage reads input/output token counts from an agenkit Message's metadata.
+// Returns (0, 0) for providers that don't populate usage metadata.
+func extractTokenUsage(msg *agenkit.Message) (in, out uint64) {
+	if msg == nil || msg.Metadata == nil {
+		return
+	}
+	usage, ok := msg.Metadata["usage"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	if v, ok := usage["input_tokens"].(int); ok {
+		in = uint64(v)
+	}
+	if v, ok := usage["output_tokens"].(int); ok {
+		out = uint64(v)
+	}
+	return
 }
 
 // getOrCreateAgent returns the per-user ConversationalAgent, creating it on first use.
@@ -145,6 +186,11 @@ func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message
 			ar.logger.Error().Err(err).Msg("planning agent failed")
 			return "", fmt.Errorf("agent processing failed: %w", err)
 		}
+		if ar.stats != nil {
+			if in, out := extractTokenUsage(response); in > 0 || out > 0 {
+				ar.stats.RecordTokens(in, out)
+			}
+		}
 		responseText = response.ContentString()
 		goto store
 	}
@@ -158,6 +204,11 @@ func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message
 		if err != nil {
 			ar.logger.Error().Err(err).Msg("planning agent failed")
 			return "", fmt.Errorf("agent processing failed: %w", err)
+		}
+		if ar.stats != nil {
+			if in, out := extractTokenUsage(response); in > 0 || out > 0 {
+				ar.stats.RecordTokens(in, out)
+			}
 		}
 		responseText = response.ContentString()
 		goto store
@@ -181,7 +232,11 @@ func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message
 			ar.logger.Error().Err(err).Msg("ReActAgent processing failed")
 			return "", fmt.Errorf("agent processing failed: %w", err)
 		}
-
+		if ar.stats != nil {
+			if in, out := extractTokenUsage(response); in > 0 || out > 0 {
+				ar.stats.RecordTokens(in, out)
+			}
+		}
 		responseText = response.ContentString()
 		goto store
 	}
@@ -194,6 +249,11 @@ conversational:
 		if err != nil {
 			ar.logger.Error().Err(err).Msg("agent processing failed")
 			return "", fmt.Errorf("agent processing failed: %w", err)
+		}
+		if ar.stats != nil {
+			if in, out := extractTokenUsage(response); in > 0 || out > 0 {
+				ar.stats.RecordTokens(in, out)
+			}
 		}
 		responseText = response.ContentString()
 	}

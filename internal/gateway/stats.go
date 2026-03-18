@@ -23,6 +23,8 @@ type RecentMessage struct {
 type Stats struct {
 	messagesIn  atomic.Uint64
 	messagesOut atomic.Uint64
+	tokensIn    atomic.Uint64
+	tokensOut   atomic.Uint64
 	startTime   time.Time
 	recentMu    sync.Mutex
 	recent      []RecentMessage
@@ -57,6 +59,12 @@ func (s *Stats) RecordOutbound(msg *channels.Message) {
 	})
 }
 
+// RecordTokens increments the cumulative token counters.
+func (s *Stats) RecordTokens(in, out uint64) {
+	s.tokensIn.Add(in)
+	s.tokensOut.Add(out)
+}
+
 func (s *Stats) addRecent(r RecentMessage) {
 	s.recentMu.Lock()
 	defer s.recentMu.Unlock()
@@ -70,6 +78,8 @@ func (s *Stats) addRecent(r RecentMessage) {
 type StatsSnapshot struct {
 	MessagesIn    uint64          `json:"messages_in"`
 	MessagesOut   uint64          `json:"messages_out"`
+	TokensIn      uint64          `json:"tokens_in"`
+	TokensOut     uint64          `json:"tokens_out"`
 	UptimeSeconds uint64          `json:"uptime_seconds"`
 	Recent        []RecentMessage `json:"recent_messages"`
 }
@@ -84,6 +94,8 @@ func (s *Stats) Snapshot() StatsSnapshot {
 	return StatsSnapshot{
 		MessagesIn:    s.messagesIn.Load(),
 		MessagesOut:   s.messagesOut.Load(),
+		TokensIn:      s.tokensIn.Load(),
+		TokensOut:     s.tokensOut.Load(),
 		UptimeSeconds: uint64(time.Since(s.startTime).Seconds()),
 		Recent:        recent,
 	}

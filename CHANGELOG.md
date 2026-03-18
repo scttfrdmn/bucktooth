@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-03-18
+
+### Added
+- `shell` tool: execute shell commands with optional human-approval gate; two-step confirmation flow (first call returns approval prompt, second call with `approved:true` executes); optional `allowed_commands` allowlist (#33)
+- Microsoft Teams channel: Bot Framework REST API webhook at `/channels/teams/messages`; OAuth2 bearer token with automatic refresh; replies via Bot Framework conversations API (#32)
+
+## [0.6.1] - 2026-03-17
+
+### Added
+- MCP (Model Context Protocol) client support: connect to `stdio` and `http` MCP servers via the `mcp.servers` config block; tools are discovered at startup and registered into the tool registry (#30)
+
+## [0.6.0] - 2026-03-17
+
+### Added
+- Gateway bearer token auth via `gateway.api_token` / `BUCKTOOTH_API_TOKEN` (#26)
+- Multi-provider LLM: `openai`, `openai-compatible`, `gemini`, `ollama`, `litellm`, `bedrock` (#27)
+- Token/cost tracking: `tokens_in`/`tokens_out` counters in `Stats`, exposed via `/dashboard/data` (#28)
+- `web_fetch` tool: HTTP fetch with HTML-to-text extraction via `golang.org/x/net/html` (#29)
+- Vector memory backend (`memory.type: vector`) wrapping agenkit-go VectorMemory (#31)
+
 ## [0.5.0] - 2026-03-17
 
 ### Fixed

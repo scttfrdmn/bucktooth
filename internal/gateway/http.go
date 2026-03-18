@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -37,6 +38,9 @@ type HTTPServer struct {
 	// Precomputed "Basic <b64>" string; empty means no auth required
 	dashAuthHash string
 
+	// Bearer token for API auth; empty means no auth required
+	apiToken string
+
 	// Version string for /dashboard/data
 	version string
 
@@ -58,6 +62,36 @@ func NewHTTPServer(port int, registry *channels.ChannelRegistry, agentRouter *Ag
 		},
 		extraRoutes: make(map[string]http.Handler),
 	}
+}
+
+// SetAPIToken sets the bearer token required on all non-probe routes.
+// An empty string disables token auth (default).
+func (h *HTTPServer) SetAPIToken(token string) {
+	h.apiToken = token
+}
+
+// apiTokenMiddleware enforces Bearer token auth when a token has been configured.
+// K8s probe endpoints (/live, /ready) are always exempt.
+func (h *HTTPServer) apiTokenMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.apiToken == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// K8s probes must be unauthenticated
+		if r.URL.Path == "/live" || r.URL.Path == "/ready" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		auth := r.Header.Get("Authorization")
+		token := strings.TrimPrefix(auth, "Bearer ")
+		if !strings.HasPrefix(auth, "Bearer ") ||
+			subtle.ConstantTimeCompare([]byte(token), []byte(h.apiToken)) != 1 {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // SetDashboardAuth enables Basic auth on dashboard routes using the given password.
@@ -206,6 +240,8 @@ func (h *HTTPServer) handleDashboardData(w http.ResponseWriter, r *http.Request)
 		"uptime_seconds":  snap.UptimeSeconds,
 		"messages_in":     snap.MessagesIn,
 		"messages_out":    snap.MessagesOut,
+		"tokens_in":       snap.TokensIn,
+		"tokens_out":      snap.TokensOut,
 		"active_users":    activeUsers,
 		"channels":        channelInfo,
 		"recent_messages": snap.Recent,
@@ -299,7 +335,7 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 
 	h.server = &http.Server{
 		Addr:         fmt.Sprintf(":%d", h.port),
-		Handler:      h.loggingMiddleware(mux),
+		Handler:      h.apiTokenMiddleware(h.loggingMiddleware(mux)),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
