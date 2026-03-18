@@ -16,6 +16,7 @@ import (
 	"github.com/scttfrdmn/bucktooth/internal/channels"
 	"github.com/scttfrdmn/bucktooth/internal/channels/testchan"
 	"github.com/scttfrdmn/bucktooth/internal/config"
+	cronsched "github.com/scttfrdmn/bucktooth/internal/cron"
 	"github.com/scttfrdmn/bucktooth/internal/memory"
 	"github.com/scttfrdmn/bucktooth/internal/observability"
 	"github.com/scttfrdmn/bucktooth/internal/tools"
@@ -43,6 +44,7 @@ type Gateway struct {
 	wsServer        *WebSocketServer
 	stats           *Stats
 	userPrefs       *UserPrefs
+	scheduler       *cronsched.Scheduler
 	mcpClients      []mcp.MCPClient
 	logger          zerolog.Logger
 	ctx             context.Context
@@ -91,6 +93,18 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 			optStr(opts, "embedding_model"),
 		)
 		memStore = memory.NewVectorStore(embedProvider)
+	case "hybrid":
+		opts := cfg.Memory.Options
+		embedProvider := memory.NewOpenAIEmbeddingProvider(
+			optStr(opts, "embedding_base_url"),
+			optStr(opts, "embedding_api_key"),
+			optStr(opts, "embedding_model"),
+		)
+		weight := cfg.Memory.HybridWeight
+		if weight == 0 {
+			weight = 0.5
+		}
+		memStore = memory.NewHybridStore(embedProvider, weight)
 	case "sqlite":
 		opts := cfg.Memory.Options
 		dbPath, _ := opts["path"].(string)
@@ -113,7 +127,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 	}
 
 	// Build tool registry from config
-	toolRegistry, err := tools.FromConfig(cfg.Tools, logger)
+	toolRegistry, err := tools.FromConfig(cfg.Tools, cfg.Agents, logger)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create tool registry: %w", err)
@@ -151,6 +165,15 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 		return nil, fmt.Errorf("failed to create agent router: %w", err)
 	}
 
+	// Wire rate limiter if enabled.
+	if cfg.RateLimit.Enabled {
+		agentRouter.SetRateLimiter(NewRateLimiter(cfg.RateLimit.RequestsPerMinute, cfg.RateLimit.Burst))
+		logger.Info().
+			Int("rpm", cfg.RateLimit.RequestsPerMinute).
+			Int("burst", cfg.RateLimit.Burst).
+			Msg("rate limiter enabled")
+	}
+
 	// Wire memory summarizer if enabled.
 	if cfg.Memory.SummarizeEnabled && llmInstance != nil {
 		threshold := cfg.Memory.SummarizeThreshold
@@ -163,6 +186,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 	}
 
 	userPrefs := NewUserPrefs()
+	agentRouter.SetUserPrefs(userPrefs)
 
 	// Create channel registry
 	channelRegistry := channels.NewChannelRegistry()
@@ -175,6 +199,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 	httpServer.SetVersion(readVersionFile())
 	httpServer.SetUserPrefs(userPrefs)
 	httpServer.SetSkillRegistry(agentRouter.SkillRegistry())
+	httpServer.SetMemoryStore(memStore)
 
 	// Register test channel routes and channel before the gateway struct is created.
 	if cfg.Gateway.TestChannel {
@@ -185,8 +210,18 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 		logger.Info().Msg("test channel enabled (harness mode)")
 	}
 
+	// Create cron scheduler.
+	scheduler, err := cronsched.New(cfg.Cron, func(ctx context.Context, msg *channels.Message) {
+		eventBus.Publish(ctx, MessageReceivedEvent(msg))
+	}, logger)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to create cron scheduler: %w", err)
+	}
+	httpServer.SetScheduler(scheduler)
+
 	// Create WebSocket server
-	wsServer := NewWebSocketServer(cfg.Gateway.WebSocketPort, logger)
+	wsServer := NewWebSocketServer(cfg.Gateway.WebSocketPort, cfg.Gateway.AllowedWSOrigins, agentRouter, logger)
 
 	g := &Gateway{
 		config:          cfg,
@@ -198,6 +233,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 		wsServer:        wsServer,
 		stats:           stats,
 		userPrefs:       userPrefs,
+		scheduler:       scheduler,
 		mcpClients:      mcpClients,
 		logger:          logger.With().Str("component", "gateway").Logger(),
 		ctx:             ctx,
@@ -263,6 +299,9 @@ func (g *Gateway) Start() error {
 		}
 	}
 
+	// Start cron scheduler.
+	g.scheduler.Start(g.ctx)
+
 	// Start test channel if harness mode is enabled.
 	if g.config.Gateway.TestChannel {
 		if tc, ok := g.channelRegistry.Get("test"); ok {
@@ -303,6 +342,9 @@ func (g *Gateway) Stop() error {
 	case <-time.After(g.config.Gateway.ShutdownTimeout):
 		g.logger.Warn().Msg("shutdown timeout exceeded")
 	}
+
+	// Stop cron scheduler.
+	g.scheduler.Stop()
 
 	// Close MCP clients
 	for _, client := range g.mcpClients {

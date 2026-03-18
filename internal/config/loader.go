@@ -76,6 +76,19 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.Skills.Enabled = true
 	}
 
+	// WebSocket origin allowlist
+	if v := os.Getenv("BUCKTOOTH_WS_ALLOWED_ORIGINS"); v != "" {
+		cfg.Gateway.AllowedWSOrigins = strings.Split(v, ",")
+	}
+
+	// Rate limiting
+	if v := os.Getenv("BUCKTOOTH_RATE_LIMIT_RPM"); v != "" {
+		if n, _ := strconv.Atoi(v); n > 0 {
+			cfg.RateLimit.RequestsPerMinute = n
+			cfg.RateLimit.Enabled = true
+		}
+	}
+
 	// Channel-specific overrides
 	if token := os.Getenv("DISCORD_BOT_TOKEN"); token != "" {
 		if cfg.Channels["discord"].Auth == nil {

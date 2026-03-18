@@ -14,6 +14,8 @@ type Config struct {
 	Memory        MemoryConfig             `yaml:"memory"`
 	Skills        SkillsConfig             `yaml:"skills"`
 	Observability ObservabilityConfig      `yaml:"observability"`
+	RateLimit     RateLimitConfig          `yaml:"rate_limit"`
+	Cron          CronConfig               `yaml:"cron"`
 }
 
 // MCPConfig configures MCP (Model Context Protocol) server connections.
@@ -46,7 +48,30 @@ type GatewayConfig struct {
 	ShutdownTimeout       time.Duration `yaml:"shutdown_timeout"`
 	TestChannel           bool          `yaml:"test_channel"`
 	DashboardAuthPassword string        `yaml:"dashboard_auth_password"`
-	APIToken              string        `yaml:"api_token"` // optional; if set, all non-probe routes require Bearer auth
+	APIToken              string        `yaml:"api_token"`          // optional; if set, all non-probe routes require Bearer auth
+	AllowedWSOrigins      []string      `yaml:"allowed_ws_origins"` // nil = allow all (dev)
+}
+
+// RateLimitConfig configures per-user token-bucket rate limiting.
+type RateLimitConfig struct {
+	Enabled           bool `yaml:"enabled"`
+	RequestsPerMinute int  `yaml:"requests_per_minute"` // default 60
+	Burst             int  `yaml:"burst"`               // default 10
+}
+
+// CronConfig holds the list of scheduled jobs.
+type CronConfig struct {
+	Jobs []CronJobConfig `yaml:"jobs"`
+}
+
+// CronJobConfig configures a single scheduled job.
+type CronJobConfig struct {
+	Name      string `yaml:"name"`
+	Schedule  string `yaml:"schedule"`   // time.Duration string, e.g. "5m", "1h"
+	Message   string `yaml:"message"`
+	ChannelID string `yaml:"channel_id"`
+	UserID    string `yaml:"user_id"`
+	Enabled   bool   `yaml:"enabled"`
 }
 
 // ChannelConfig configures a messaging channel
@@ -79,6 +104,8 @@ type ToolsConfig struct {
 	Calculator ToolConfig `yaml:"calculator"`
 	Message    ToolConfig `yaml:"message"`
 	Shell      ToolConfig `yaml:"shell"`
+	PDF        ToolConfig `yaml:"pdf"`
+	Image      ToolConfig `yaml:"image"`
 }
 
 // ToolConfig configures a specific tool
@@ -89,10 +116,11 @@ type ToolConfig struct {
 
 // MemoryConfig configures memory storage
 type MemoryConfig struct {
-	Type               string         `yaml:"type"` // "inmemory", "redis", "vector", or "sqlite"
+	Type               string         `yaml:"type"` // "inmemory", "redis", "vector", "sqlite", or "hybrid"
 	Options            map[string]any `yaml:"options"`
 	SummarizeEnabled   bool           `yaml:"summarize_enabled"`
 	SummarizeThreshold int            `yaml:"summarize_threshold"` // default 30
+	HybridWeight       float64        `yaml:"hybrid_weight"`       // 0.0=pure semantic, 1.0=pure BM25; default 0.5
 }
 
 // SkillsConfig configures the agent skills system.
@@ -154,6 +182,12 @@ func DefaultConfig() *Config {
 		Memory: MemoryConfig{
 			Type:               "inmemory",
 			SummarizeThreshold: 30,
+			HybridWeight:       0.5,
+		},
+		RateLimit: RateLimitConfig{
+			Enabled:           false,
+			RequestsPerMinute: 60,
+			Burst:             10,
 		},
 		Skills: SkillsConfig{
 			Enabled:         false,

@@ -51,7 +51,7 @@ func runMCPServe(cmd *cobra.Command, args []string) error {
 
 	logger := setupLogging(cfg.Gateway.LogLevel)
 
-	toolRegistry, err := tools.FromConfig(cfg.Tools, logger)
+	toolRegistry, err := tools.FromConfig(cfg.Tools, cfg.Agents, logger)
 	if err != nil {
 		return fmt.Errorf("failed to create tool registry: %w", err)
 	}

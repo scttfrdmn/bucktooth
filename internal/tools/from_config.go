@@ -8,8 +8,10 @@ import (
 )
 
 // FromConfig builds a tool Registry from the provided ToolsConfig, registering
-// each enabled tool. Returns an error only if a required tool fails to initialise.
-func FromConfig(cfg config.ToolsConfig, logger zerolog.Logger) (*Registry, error) {
+// each enabled tool. agentCfg is used by tools that call the Anthropic API
+// directly (pdf_analyze, image_analyze). Returns an error only if a required
+// tool fails to initialise.
+func FromConfig(cfg config.ToolsConfig, agentCfg config.AgentConfig, logger zerolog.Logger) (*Registry, error) {
 	registry := NewRegistry()
 
 	if cfg.Calculator.Enabled {
@@ -81,6 +83,38 @@ func FromConfig(cfg config.ToolsConfig, logger zerolog.Logger) (*Registry, error
 		}
 		registry.Register(calTool)
 		logger.Info().Str("store", storePath).Msg("calendar tool registered")
+	}
+
+	if cfg.PDF.Enabled {
+		model, _ := cfg.PDF.Options["model"].(string)
+		if model == "" {
+			model = agentCfg.LLMModel
+		}
+		sandboxDir, _ := cfg.PDF.Options["sandbox_dir"].(string)
+		apiBase := agentCfg.APIBase
+		if apiBase == "" {
+			apiBase = "https://api.anthropic.com/v1"
+		}
+		registry.Register(NewPDFAnalysisTool(agentCfg.APIKey, apiBase, model, sandboxDir))
+		logger.Info().Msg("pdf_analyze tool registered")
+	}
+
+	if cfg.Image.Enabled {
+		model, _ := cfg.Image.Options["model"].(string)
+		if model == "" {
+			model = agentCfg.LLMModel
+		}
+		sandboxDir, _ := cfg.Image.Options["sandbox_dir"].(string)
+		maxBytes := int64(0)
+		if v, ok := cfg.Image.Options["max_bytes"].(int); ok {
+			maxBytes = int64(v)
+		}
+		apiBase := agentCfg.APIBase
+		if apiBase == "" {
+			apiBase = "https://api.anthropic.com/v1"
+		}
+		registry.Register(NewImageAnalysisTool(agentCfg.APIKey, apiBase, model, maxBytes, sandboxDir))
+		logger.Info().Msg("image_analyze tool registered")
 	}
 
 	return registry, nil

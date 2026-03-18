@@ -16,6 +16,8 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/scttfrdmn/agenkit/agenkit-go/skills"
 	"github.com/scttfrdmn/bucktooth/internal/channels"
+	cronsched "github.com/scttfrdmn/bucktooth/internal/cron"
+	"github.com/scttfrdmn/bucktooth/internal/memory"
 )
 
 // HTTPServer provides HTTP endpoints
@@ -50,6 +52,10 @@ type HTTPServer struct {
 
 	// Extra routes registered before server start
 	extraRoutes map[string]http.Handler
+
+	// Admin API dependencies
+	memoryStore memory.Store
+	scheduler   *cronsched.Scheduler
 }
 
 // NewHTTPServer creates a new HTTP server
@@ -132,6 +138,16 @@ func (h *HTTPServer) Handle(pattern string, handler http.Handler) {
 // SetStaticFiles sets the handler used to serve the embedded web dashboard.
 func (h *HTTPServer) SetStaticFiles(fs http.Handler) {
 	h.staticFiles = fs
+}
+
+// SetMemoryStore attaches the memory store for the admin flush endpoint.
+func (h *HTTPServer) SetMemoryStore(store memory.Store) {
+	h.memoryStore = store
+}
+
+// SetScheduler attaches the cron scheduler for the /cron/jobs endpoint.
+func (h *HTTPServer) SetScheduler(s *cronsched.Scheduler) {
+	h.scheduler = s
 }
 
 // BroadcastEvent sends payload to all connected dashboard WebSocket clients.
@@ -332,6 +348,68 @@ func (h *HTTPServer) handleUserPreferences(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// handleAdminMemoryFlush handles GET /admin/memory/{user_id}/flush.
+func (h *HTTPServer) handleAdminMemoryFlush(w http.ResponseWriter, r *http.Request) {
+	// Path: /admin/memory/{user_id}/flush
+	path := strings.TrimPrefix(r.URL.Path, "/admin/memory/")
+	userID := strings.TrimSuffix(path, "/flush")
+	if userID == "" || userID == path {
+		http.NotFound(w, r)
+		return
+	}
+	if h.memoryStore != nil {
+		if err := h.memoryStore.ClearHistory(r.Context(), userID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok", "user_id": userID}); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode admin memory flush response")
+	}
+}
+
+// handleAdminSkillsReload handles POST /admin/skills/reload.
+func (h *HTTPServer) handleAdminSkillsReload(w http.ResponseWriter, r *http.Request) {
+	if h.skillRegistry == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := h.skillRegistry.DiscoverSkills(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	count := len(h.skillRegistry.All())
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]any{"status": "ok", "skills_loaded": count}); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode admin skills reload response")
+	}
+}
+
+// handleAdminChannelsHealth handles GET /admin/channels/health.
+func (h *HTTPServer) handleAdminChannelsHealth(w http.ResponseWriter, r *http.Request) {
+	health := h.channelRegistry.HealthCheck()
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(health); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode admin channels health response")
+	}
+}
+
+// handleCronJobs handles GET /cron/jobs.
+func (h *HTTPServer) handleCronJobs(w http.ResponseWriter, r *http.Request) {
+	var jobs []cronsched.JobInfo
+	if h.scheduler != nil {
+		jobs = h.scheduler.Jobs()
+	}
+	if jobs == nil {
+		jobs = []cronsched.JobInfo{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]any{"jobs": jobs}); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode cron jobs response")
+	}
+}
+
 // Start starts the HTTP server
 func (h *HTTPServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
@@ -361,6 +439,14 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 
 	// Skills listing
 	mux.HandleFunc("/skills", h.handleSkills)
+
+	// Cron jobs listing
+	mux.HandleFunc("/cron/jobs", h.handleCronJobs)
+
+	// Admin API (Bearer-token protected via apiTokenMiddleware on outer handler)
+	mux.HandleFunc("/admin/memory/", h.handleAdminMemoryFlush)
+	mux.HandleFunc("/admin/skills/reload", h.handleAdminSkillsReload)
+	mux.HandleFunc("/admin/channels/health", h.handleAdminChannelsHealth)
 
 	// Programmatically registered extra routes (e.g. test channel)
 	for pattern, handler := range h.extraRoutes {

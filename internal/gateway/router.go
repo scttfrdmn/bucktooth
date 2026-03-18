@@ -38,6 +38,8 @@ type AgentRouter struct {
 	skillRegistry   *skills.SkillRegistry
 	skillsMaxActive int
 	summarizer      *memory.Summarizer
+	rateLimiter     *RateLimiter
+	userPrefs       *UserPrefs
 }
 
 // llmClientAdapter wraps an LLM to implement the patterns.LLMClient interface
@@ -150,6 +152,43 @@ func (ar *AgentRouter) SetSummarizer(s *memory.Summarizer) {
 	ar.summarizer = s
 }
 
+// SetRateLimiter attaches a per-user rate limiter to the router.
+func (ar *AgentRouter) SetRateLimiter(rl *RateLimiter) {
+	ar.rateLimiter = rl
+}
+
+// SetUserPrefs attaches the UserPrefs store used for /system prompt overrides.
+func (ar *AgentRouter) SetUserPrefs(up *UserPrefs) {
+	ar.userPrefs = up
+}
+
+// evictAgent removes a user's cached agent so it is re-created with fresh config
+// on the next message (e.g. after a /system prompt change).
+func (ar *AgentRouter) evictAgent(userID string) {
+	ar.userAgentsMu.Lock()
+	defer ar.userAgentsMu.Unlock()
+	delete(ar.userAgents, userID)
+}
+
+// handleSystemCommand processes the /system slash command.
+func (ar *AgentRouter) handleSystemCommand(msg *channels.Message, content string) (string, error) {
+	if ar.userPrefs == nil {
+		return "System prompt override not available.", nil
+	}
+	if content == "/system reset" {
+		ar.userPrefs.DeleteSystemPrompt(msg.UserID)
+		ar.evictAgent(msg.UserID)
+		return "System prompt reset to default.", nil
+	}
+	if !strings.HasPrefix(content, "/system ") {
+		return "Usage: /system <prompt>  or  /system reset", nil
+	}
+	prompt := strings.TrimPrefix(content, "/system ")
+	ar.userPrefs.SetSystemPrompt(msg.UserID, prompt)
+	ar.evictAgent(msg.UserID)
+	return fmt.Sprintf("System prompt set: %q", prompt), nil
+}
+
 // maybeInjectSkills prepends relevant skill instructions to the message content
 // when skills are enabled. Returns the original message unchanged if no skills
 // are loaded or no relevant skills are found for the query.
@@ -204,6 +243,7 @@ func extractTokenUsage(msg *agenkit.Message) (in, out uint64) {
 }
 
 // getOrCreateAgent returns the per-user ConversationalAgent, creating it on first use.
+// If the user has a custom system prompt set via /system, that is used instead of the default.
 func (ar *AgentRouter) getOrCreateAgent(userID string) *patterns.ConversationalAgent {
 	ar.userAgentsMu.RLock()
 	agent, ok := ar.userAgents[userID]
@@ -217,9 +257,15 @@ func (ar *AgentRouter) getOrCreateAgent(userID string) *patterns.ConversationalA
 	if agent, ok = ar.userAgents[userID]; ok {
 		return agent
 	}
+	prompt := systemPrompt
+	if ar.userPrefs != nil {
+		if custom := ar.userPrefs.GetSystemPrompt(userID); custom != "" {
+			prompt = custom
+		}
+	}
 	agent, _ = patterns.NewConversationalAgent(&patterns.ConversationalAgentConfig{
 		LLMClient:    ar.llmClient,
-		SystemPrompt: systemPrompt,
+		SystemPrompt: prompt,
 		MaxHistory:   ar.config.MaxHistory,
 	})
 	ar.userAgents[userID] = agent
@@ -235,6 +281,16 @@ func (ar *AgentRouter) ActiveUsers() int {
 
 // ProcessMessage processes a message and returns a response
 func (ar *AgentRouter) ProcessMessage(ctx context.Context, msg *channels.Message) (string, error) {
+	// Rate limit check — fast path before any tracing overhead.
+	if ar.rateLimiter != nil && !ar.rateLimiter.Allow(msg.UserID) {
+		return "", fmt.Errorf("rate limit exceeded: please slow down")
+	}
+
+	// /system command — handle before routing to an agent.
+	if strings.HasPrefix(msg.Content, "/system") {
+		return ar.handleSystemCommand(msg, msg.Content)
+	}
+
 	ctx, span := otel.Tracer("bucktooth/router").Start(ctx, "router.process_message")
 	defer span.End()
 
