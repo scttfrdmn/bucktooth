@@ -113,8 +113,11 @@ check: fmt vet lint test
 ci: fmt vet test
 	@echo "CI checks passed!"
 
-## release-tag: Create and push a version tag (usage: make release-tag VERSION=0.13.0)
+## release-tag: Create and push a version tag (usage: make release-tag VERSION=0.14.0)
+# -m is required: with tag.gpgsign=true (or tag.forceSignAnnotated) a bare
+# `git tag` creates an annotated tag and aborts with "no tag message?".
 release-tag:
-	@test -n "$(VERSION)" || (echo "VERSION is required: make release-tag VERSION=0.13.0" && exit 1)
-	git tag v$(VERSION)
+	@test -n "$(VERSION)" || (echo "VERSION is required: make release-tag VERSION=0.14.0" && exit 1)
+	@test "$(VERSION)" = "$$(cat VERSION)" || (echo "VERSION=$(VERSION) does not match ./VERSION ($$(cat VERSION))" && exit 1)
+	git tag -a v$(VERSION) -m "v$(VERSION)"
 	git push origin v$(VERSION)
