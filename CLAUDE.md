@@ -9,23 +9,26 @@ BuckTooth is a multi-channel AI assistant gateway (v0.14.0) written in Go. It co
 - **Go module**: `github.com/scttfrdmn/bucktooth`
 - **Agenkit module**: `github.com/scttfrdmn/agenkit/agenkit-go` (monorepo subdirectory), pinned to a published pseudo-version
 
-### Two agenkit repos — use the monorepo, not the mirror
+### Two agenkit repos — currently the monorepo, mirror pending
 
-| Repo | Module path | Use it? |
-|------|-------------|---------|
-| `scttfrdmn/agenkit` | `github.com/scttfrdmn/agenkit/agenkit-go` | **Yes** — source of truth |
-| `scttfrdmn/agenkit-go` | `github.com/scttfrdmn/agenkit-go` | No — distribution mirror, lags behind |
+| Repo | Module path | Status |
+|------|-------------|--------|
+| `scttfrdmn/agenkit` | `github.com/scttfrdmn/agenkit/agenkit-go` | Current dependency — source of truth |
+| `scttfrdmn/agenkit-go` | `github.com/scttfrdmn/agenkit-go` | Distribution mirror — **being fixed upstream**; switch once synced |
 
-The mirror publishes clean semver tags (`v0.87.0`) and is tempting to pin to,
-but it lags the monorepo badly: as of 2026-08-03 its `v0.87.0` dates from
-2026-06-20 and still exposes the **old** `patterns` LLM interface (`Chat`),
-not the current `Complete`. Pinning it would silently revert the fix in
-`internal/gateway/router.go`. The module paths also differ, so it is not a
-drop-in substitute.
+The mirror is the intended long-term dependency: it publishes clean semver tags
+instead of pseudo-versions. **Do not switch yet.** Its `main` is current, but its
+newest *tag* (`v0.87.0`, 2026-06-20) predates the `Complete` convergence and
+still exposes the old `patterns` `Chat` interface — pinning it would silently
+revert the fix in `internal/gateway/router.go`. The monorepo simply has not
+tagged since June, and the mirror only republishes upstream tags.
 
-The monorepo has no subdirectory-scoped tags (Go needs `agenkit-go/vX.Y.Z`),
-so a **pseudo-version is the only correct pin** until those are published.
-To bump it:
+Tracked upstream: [agenkit#833](https://github.com/scttfrdmn/agenkit/issues/833)
+(stale mirror tags) and [agenkit#660](https://github.com/scttfrdmn/agenkit/issues/660)
+(no `agenkit-go/vX.Y.Z` tags on the monorepo).
+
+Meanwhile the monorepo has no subdirectory-scoped tags (Go needs
+`agenkit-go/vX.Y.Z`), so a pseudo-version is the only correct pin. To bump:
 
 ```bash
 go get github.com/scttfrdmn/agenkit/agenkit-go@<monorepo-commit-sha>
@@ -34,6 +37,13 @@ GOWORK=off go build ./... && go test ./...
 
 Confirm the target commit is on `origin/main` first — a pseudo-version for an
 unpushed commit resolves locally but fails in CI.
+
+**Switching to the mirror** is mechanical once it publishes a current tag:
+the package layout is identical (`adapter/llm`, `agenkit`, `memory`, `patterns`,
+`protocols/mcp`, `skills`), so it is a path rewrite across 36 import lines in
+24 files, then `go get github.com/scttfrdmn/agenkit-go@vX.Y.Z`. Before
+switching, verify the target tag actually contains the `Complete` interface —
+tag freshness is the thing that bites here, not the rewrite.
 
 ### Local agenkit-go development
 
