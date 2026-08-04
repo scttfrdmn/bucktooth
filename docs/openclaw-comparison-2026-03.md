@@ -1,6 +1,6 @@
 # BuckTooth vs OpenClaw — Feature Gap Analysis
 
-**Date**: 2026-03-18 (updated 2026-03-18 for v0.14.0)
+**Date**: 2026-03-18 (updated 2026-08-04 — §10 and §11 added for planned work)
 **BuckTooth version**: v0.14.0
 **OpenClaw version**: v2026.3.13 (released 2026-03-14)
 
@@ -224,7 +224,50 @@ Update this section as issues #76–#84 land.
 
 ---
 
-## Priority Matrix (post-v0.13.0)
+## 11. Bounded Decomposition — quarry as a host capability, planned
+
+The second lead, and likewise recorded outside the parity tables because no sibling has
+an equivalent.
+
+| Capability | BuckTooth | RustyNail | OpenClaw |
+|-----------|-----------|-----------|---------|
+| Cost tracking (after the fact) | ✅ v0.13.0 (`GET /v1/usage`) | ✅ | ✅ (ClawMetry) |
+| Per-request spend cap enforced before spend | 🚧 planned | 🚧 planned (twin) | ❌ |
+| Bounded recursive decomposition | 🚧 planned | 🚧 planned (twin) | ❌ |
+| Cost receipt returned with the answer | 🚧 planned | 🚧 planned (twin) | ❌ |
+| Stability / provenance estimate on an answer | 🚧 planned | 🚧 planned (twin) | ❌ |
+| Pre-spend plan disclosure + approval | 🚧 planned | 🚧 planned (twin) | ❌ |
+| Scope-isolated sub-answer cache | 🚧 planned | 🚧 planned (twin) | ❌ |
+
+The nearest thing either project has today is cost *tracking* — accounting after the
+money is gone (§7). Neither can accept "research this, spend at most $5, done by
+tonight" as a constraint, and neither returns an answer with a receipt saying what it
+cost, which cap bound it, and which claims are unstable.
+
+The [Quarry Host](https://github.com/scttfrdmn/bucktooth/issues/85) milestone integrates
+[quarry](https://github.com/scttfrdmn/quarry) as a subprocess host capability. The
+gateway becomes quarry's `Provider` chokepoint via its own OpenAI-compatible endpoint, so
+quarry rides existing provider config, metering, and fallback chains rather than holding
+credentials of its own. The boundary is subprocess-per-run in **both** twins — deliberately
+not an in-process import even in the Go twin, where quarry is directly importable, so the
+two share exactly one contract.
+
+Two things worth recording as constraints rather than choices:
+
+- quarry's `RunEvent` stream is a **post-hoc fold of a completed run**, not a live feed,
+  and carries cost and trust but not tree *shape*. Live decomposition-tree rendering is
+  therefore deferred pending upstream work, not merely unbuilt.
+- Cache isolation between senders (quarry P6) is the **host's** responsibility: quarry can
+  only isolate along the `Scope` it is handed, so minting a per-sender scope is a
+  correctness requirement, not a hardening nicety.
+
+Shared `RunEvent` fixtures (#93) hold both twins to bit-identical handling of the same
+input, which makes this the cleanest Go-vs-Rust comparison surface the experiment has.
+Update this section as issues #86–#93 land.
+
+---
+
+## Priority Matrix (post-v0.14.0)
 
 ### Shipped in v0.12.0
 1. ✅ **ClawHub SKILL.md dep validation** — `dep_check_enabled: true` in `skills` config
@@ -244,7 +287,20 @@ Update this section as issues #76–#84 land.
 11. ✅ **Security audit endpoint** — `GET /admin/audit` returns scored security posture report
 12. ✅ **Exec approval gates documented** — shell tool `require_approval=true` is the default; now documented and surfaced in audit
 
-### Larger investments — v0.15.x+
+### In flight — not parity work
+
+Both are leads rather than gaps, so they sit outside the numbered parity sections and
+outside the priority ranking, which orders work by parity value:
+
+- **[Signed & Sandboxed Skills](https://github.com/scttfrdmn/bucktooth/issues/75)** (§10) —
+  Wasm skills, capability manifests, OCI distribution, identity-pinned verification (#76–#84)
+- **[Quarry Host](https://github.com/scttfrdmn/bucktooth/issues/85)** (§11) —
+  bounded decomposition under sender-supplied caps, with a cost receipt (#86–#93)
+
+Both ship in RustyNail simultaneously via mirrored issue sets, so neither moves the
+BuckTooth-vs-RustyNail comparison.
+
+### Larger investments — later
 - **Device pairing approval flow** — Signal device pairing UI
 - **ClawMetry equivalent** — purpose-built AI observability dashboard
 - iMessage/Matrix channels
