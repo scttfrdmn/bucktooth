@@ -2,8 +2,8 @@ apiVersion: v2
 name: bucktooth
 description: Multi-channel AI assistant gateway
 type: application
-version: 0.4.0
-appVersion: "0.4.0"
+version: 0.13.0
+appVersion: "0.13.0"
 home: https://github.com/scttfrdmn/bucktooth
 sources:
   - https://github.com/scttfrdmn/bucktooth

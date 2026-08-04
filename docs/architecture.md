@@ -1,94 +1,70 @@
 # BuckTooth Architecture
 
-## Overview
-
-BuckTooth is a multi-channel AI assistant gateway built with Go and Agenkit-Go. It connects to various messaging platforms (Discord, WhatsApp, Telegram, Slack) and provides AI-powered responses using Anthropic's Claude.
-
-## Architecture Diagram
+## Component Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  BuckTooth Gateway (Single Go Binary)                     │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │ HTTP Server (:8080)                             │   │
-│  │ - /health  - Health check endpoint              │   │
-│  │ - /status  - Status endpoint                    │   │
-│  │ - /metrics - Prometheus metrics                 │   │
-│  └─────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │ WebSocket Server (:18789)                       │   │
-│  │ - Real-time client connections                  │   │
-│  │ - Event streaming                               │   │
-│  └─────────────────────────────────────────────────┘   │
-│           │                                             │
-│  ┌────────▼────────────────────────────────────────┐  │
-│  │ Event Bus                                       │  │
-│  │ - Message routing                               │  │
-│  │ - Event publishing/subscription                 │  │
-│  └────────┬────────────────────────────────────────┘  │
-│           │                                             │
-│  ┌────────┴────────┬──────────┬──────────┐            │
-│  │ Discord Channel │ WhatsApp │ Telegram │ Slack...   │
-│  │ - Receive msgs  │ (Phase 2)│ (Phase 3)│            │
-│  │ - Send msgs     │          │          │            │
-│  └────────┬────────┴──────────┴──────────┘            │
-│           │                                             │
-│  ┌────────▼────────────────────────────────────────┐  │
-│  │ Agent Router                                    │  │
-│  │ - Route to appropriate agent                    │  │
-│  │ - Manage conversation context                   │  │
-│  └────────┬────────────────────────────────────────┘  │
-│           │                                             │
-│  ┌────────▼────────────────────────────────────────┐  │
-│  │ Agenkit ConversationalAgent                     │  │
-│  │ - LLM interaction (Anthropic Claude)            │  │
-│  │ - Conversation history management               │  │
-│  └────────┬────────────────────────────────────────┘  │
-│           │                                             │
-│  ┌────────▼────────────────────────────────────────┐  │
-│  │ Memory Store (In-Memory)                        │  │
-│  │ - User conversation history                     │  │
-│  │ - Per-user message storage                      │  │
-│  └──────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  BuckTooth Gateway (Single Go Binary ~25 MB)                                  │
+│                                                                                │
+│  ┌──────────────────────────────┐  ┌──────────────────────────────────────┐  │
+│  │  HTTP Server (:8080)         │  │  WebSocket Server (:18789)           │  │
+│  │  REST API · Dashboard        │  │  Token streaming · Client events     │  │
+│  │  OpenAI-compat completions   │  └──────────────────────────────────────┘  │
+│  │  Prometheus metrics          │                                             │
+│  └──────────────────────────────┘                                             │
+│                                                                                │
+│  ┌──────────────────────────────────────────────────────────────────────────┐ │
+│  │  Event Bus                                                               │ │
+│  │  message.received · message.sent · channel.connected · agent.*          │ │
+│  └──────────────────────┬─────────────────────────────────────────────────┘ │
+│                         │                                                      │
+│  ┌──────┬──────┬────────┬──────┬─────────┬────────┐                          │
+│  │Discord│Telegram│WhatsApp│Slack│  Teams  │Signal  │  ← Channel adapters     │
+│  └──────┴──────┴────────┴──────┴─────────┴────────┘                          │
+│                         │                                                      │
+│  ┌──────────────────────▼──────────────────────────────────────────────────┐ │
+│  │  Agent Router                                                           │ │
+│  │  Deduplication · Rate limiting · Stats · User preferences              │ │
+│  └──────────────────────┬──────────────────────────────────────────────────┘ │
+│                         │                                                      │
+│  ┌──────────────────────▼──────────────────────────────────────────────────┐ │
+│  │  LLM (7 providers + retry/backoff + fallback chain)                     │ │
+│  │  Anthropic · OpenAI · Gemini · Bedrock · Ollama · LiteLLM · Stub       │ │
+│  └──────────────────────┬──────────────────────────────────────────────────┘ │
+│                         │                                                      │
+│  ┌──────────┐  ┌────────┴───────┐  ┌──────────────┐  ┌────────────────────┐ │
+│  │  Memory  │  │  Tool Registry │  │  Skill       │  │  Cost Tracker      │ │
+│  │  5 types │  │  11 tools      │  │  Registry    │  │  per-model USD     │ │
+│  └──────────┘  └────────────────┘  └──────────────┘  └────────────────────┘ │
+│                                                                                │
+│  ┌──────────────────────┐  ┌─────────────────┐  ┌───────────────────────┐   │
+│  │  Cron Scheduler      │  │  MCP Clients    │  │  Chunker / Formatter  │   │
+│  │  scheduled messages  │  │  tool bridge    │  │  per-platform split   │   │
+│  └──────────────────────┘  └─────────────────┘  └───────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
 
 ## Components
 
-### Gateway
+### Gateway (`internal/gateway/gateway.go`)
 
-The main application component that orchestrates all other components.
+The top-level orchestrator. Initialises all subsystems, manages their lifecycle, and routes the `message.received` event through the processing pipeline.
 
-**Responsibilities:**
-- Initialize and manage component lifecycle
-- Handle graceful shutdown
-- Register and manage channels
-- Coordinate message flow
+### Event Bus (`internal/gateway/eventbus.go`)
 
-**Files:**
-- `internal/gateway/gateway.go`
+An in-process publish/subscribe bus. Event types:
 
-### Event Bus
+- `message.received` — inbound user message
+- `message.sent` — outbound response delivered
+- `channel.connected` / `channel.disconnected`
+- `agent.started` / `agent.completed` / `agent.error`
 
-Publish-subscribe event system for internal communication.
+### Channels (`internal/channels/`)
 
-**Event Types:**
-- `message.received` - New message from a channel
-- `message.sent` - Message sent to a channel
-- `channel.connected` - Channel successfully connected
-- `channel.disconnected` - Channel disconnected
-- `agent.started` - Agent started processing
-- `agent.completed` - Agent completed processing
-- `agent.error` - Agent encountered an error
+Platform adapters. Each implements the `Channel` interface:
 
-**Files:**
-- `internal/gateway/eventbus.go`
-
-### Channels
-
-Adapters for different messaging platforms.
-
-**Channel Interface:**
 ```go
 type Channel interface {
     Name() string
@@ -100,179 +76,106 @@ type Channel interface {
 }
 ```
 
-**Implemented Channels:**
-- Discord (Phase 1) - `internal/channels/discord/`
-- WhatsApp (Phase 2) - `internal/channels/whatsapp/`
-- Telegram (Phase 3) - `internal/channels/telegram/`
-- Slack (Phase 3) - `internal/channels/slack/`
+Supported: Discord, Telegram, WhatsApp (whatsmeow), Slack (Socket Mode), Microsoft Teams (Bot Framework), Signal (signal-cli JSON-RPC).
 
-**Files:**
-- `internal/channels/channel.go` - Channel interface
-- `internal/channels/base.go` - Base channel implementation
-- `internal/channels/discord/discord.go` - Discord implementation
+### Agent Router (`internal/gateway/router.go`)
 
-### Agent Router
+Routes messages to the configured agent pattern (conversational / ReAct / planning), manages LLM instances, and wires optional middleware:
 
-Routes messages to appropriate agents and manages conversation context.
+- `RateLimiter` — per-user token-bucket
+- `CostTracker` — per-model USD accounting
+- `Summarizer` — LLM-based history compaction
 
-**Responsibilities:**
-- Select appropriate agent for each message
-- Manage conversation history
-- Interface with memory store
-- Handle agent errors
+### LLM Layer
 
-**Current Agents:**
-- ConversationalAgent (Agenkit pattern)
+Backed by agenkit-go adapters. Supports retry with exponential backoff (configurable attempts + initial backoff) and a fallback provider chain — if the primary LLM fails with a non-retryable error, the next provider in `fallback_providers` is tried.
 
-**Future Agents (Phase 2+):**
-- ReActAgent - For tool-augmented reasoning
-- PlanningAgent - For multi-step workflows
-- RouterAgent - For intelligent agent selection
+### Memory Store (`internal/memory/`)
 
-**Files:**
-- `internal/gateway/router.go`
+Five pluggable backends:
 
-### Memory Store
+| Backend | Description |
+|---------|-------------|
+| `inmemory` | In-process map (default, lost on restart) |
+| `redis` | Persistent, distributed |
+| `sqlite` | Local file, no external service required |
+| `vector` | Cosine-similarity semantic search |
+| `hybrid` | BM25 + semantic search with configurable weight |
 
-Stores conversation history for each user.
+Optional: memory summarization (message-count or token-count trigger), temporal recency decay.
 
-**Implementations:**
-- In-Memory (Phase 1) - Simple map-based storage
-- Redis (Future) - Persistent distributed storage
+### Tool Registry (`internal/tools/`)
 
-**Files:**
-- `internal/memory/memory.go` - Store interface
-- `internal/memory/inmemory.go` - In-memory implementation
+11 tools registered at startup: calculator, file system (sandboxed), web search (Brave), web fetch, calendar, shell (with approval gates), PDF extraction, image analysis, browser automation (Chrome CDP), message (cross-channel), inter-channel message. Additional tools are registered dynamically from MCP servers.
 
-### HTTP Server
+### Skill Registry
 
-Provides REST API endpoints for monitoring and control.
+Discovers `SKILL.md` files from configured `search_paths` and injects skill instructions into agent prompts. Optional dependency validation ensures required binaries and env vars are available before injection.
 
-**Endpoints:**
-- `GET /health` - Health check with channel status
-- `GET /status` - Detailed system status
-- `GET /metrics` - Prometheus metrics
+### HTTP Server (`internal/gateway/http.go`)
 
-**Files:**
-- `internal/gateway/http.go`
+Serves the web dashboard (embedded static assets), REST API endpoints, Prometheus metrics, and OpenAI-compatible completions. Optional Bearer token auth and Basic auth for dashboard routes.
 
-### WebSocket Server
+### WebSocket Server (`internal/gateway/websocket.go`)
 
-Provides real-time WebSocket connections for clients.
+Provides token-by-token streaming for long responses and broadcasts gateway events to the dashboard's real-time feed.
 
-**Features:**
-- Real-time message streaming
-- Event notifications
-- Client management
+### Cron Scheduler (`internal/cron/`)
 
-**Files:**
-- `internal/gateway/websocket.go`
+Injects scheduled messages into the event bus at configured intervals.
+
+### MCP Clients
+
+Connects to external Model Context Protocol servers (stdio subprocess or HTTP) at startup and registers their tools into the tool registry.
+
+### Chunker / Formatter (`internal/gateway/chunker.go`, `formatter.go`)
+
+The Chunker splits long responses into platform-appropriate segments (e.g. Discord 2 000 chars, Slack 4 000 chars). The Formatter applies channel-aware Markdown transformations before delivery.
+
+---
 
 ## Message Flow
 
-1. User sends message via Discord
-2. Discord channel receives message via webhook
-3. Channel queues message internally
-4. Gateway reads message from channel queue
-5. Gateway publishes `message.received` event
-6. Agent router receives event and processes message
-7. Router retrieves conversation history from memory store
-8. Router sends message + history to ConversationalAgent
-9. ConversationalAgent calls Anthropic API
-10. Agent returns response
-11. Router stores message and response in memory
-12. Gateway publishes `agent.completed` event
-13. Gateway sends response back through Discord channel
-14. Discord channel delivers message to user
-
-## Configuration
-
-Configuration is loaded from:
-1. Default values (embedded)
-2. YAML config file (`configs/gateway.yaml`)
-3. Environment variables (`LOBSTER_*`)
-4. CLI flags (`--flag`)
-
-**Configuration Structure:**
-```yaml
-gateway:
-  websocket_port: 18789
-  http_port: 8080
-  log_level: info
-
-channels:
-  discord:
-    enabled: true
-    auth:
-      token: ${DISCORD_BOT_TOKEN}
-
-agents:
-  llm_provider: anthropic
-  llm_model: claude-sonnet-4-5-20250220
-  api_key: ${ANTHROPIC_API_KEY}
-  max_history: 20
-
-memory:
-  type: inmemory
 ```
+1.  User sends message on a platform
+2.  Channel adapter receives it and emits a channels.Message
+3.  Gateway publishes message.received event
+4.  Deduplicator checks ring buffer — drops duplicate
+5.  Stats recorder increments inbound counter
+6.  Rate limiter checks per-user token bucket
+7.  Agent router retrieves conversation history from memory store
+8.  Router passes message + history to LLM (with retry + fallback)
+9.  LLM returns response text
+10. Cost tracker records token usage and USD cost
+11. Memory store appends message + response
+12. Formatter applies channel-aware Markdown
+13. Chunker splits into platform-sized pieces
+14. Channel adapter delivers each chunk (100 ms gap between chunks)
+15. Stats recorder increments outbound counter
+16. Gateway publishes message.sent and agent.completed events
+17. Dashboard WebSocket clients receive real-time update
+```
+
+---
+
+## Configuration Loading
+
+Priority order (highest wins):
+
+1. CLI flags (`--flag`)
+2. Environment variables (`LOBSTER_*`, `ANTHROPIC_API_KEY`, etc.)
+3. YAML config file (default: `configs/gateway.yaml`)
+4. Built-in defaults (`config.DefaultConfig()`)
+
+`${VAR_NAME}` substitution is performed on YAML values at load time.
+
+---
 
 ## Observability
 
-### Logging
-
-Structured JSON logging using zerolog:
-- Log levels: debug, info, warn, error
-- Contextual logging with trace IDs
-- Component-specific loggers
-
-### Metrics
-
-Prometheus metrics exported at `/metrics`:
-- Message counters (received, sent)
-- Agent processing duration
-- Channel health status
-- Error rates
-
-### Health Checks
-
-Health endpoint at `/health`:
-- Overall system health
-- Per-channel health status
-- Connection status
-
-## Error Handling
-
-- Channel errors don't affect other channels
-- Graceful degradation
-- Automatic reconnection for channels
-- Error events published via event bus
-
-## Scalability
-
-Current architecture supports:
-- Multiple channels simultaneously
-- Concurrent message processing
-- Horizontal scaling (future with Redis memory)
-
-**Bottlenecks:**
-- In-memory storage (Phase 1 only)
-- Single-instance deployment (Phase 1)
-
-**Future Improvements:**
-- Redis for distributed memory
-- Message queue for async processing
-- Load balancing across instances
-
-## Security
-
-- Input validation on all messages
-- API key management via environment variables
-- No credentials in config files
-- Per-channel authentication
-
-## Testing Strategy
-
-- Unit tests for all components
-- Integration tests for message flow
-- E2E tests for complete workflows
-- Channel adapter tests with mocks
+- **Logging**: structured JSON via zerolog; per-component loggers; configurable level
+- **Metrics**: Prometheus counters and histograms at `GET /metrics`
+- **Tracing**: OpenTelemetry spans exported via OTLP HTTP
+- **Cost tracking**: per-model USD totals via `GET /v1/usage`
+- **Health probes**: `/live` (always 200), `/ready` (503 when no channel healthy), `/health` (channel details)
+- **Security audit**: `GET /admin/audit` returns scored security posture report

@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-03
+
+### Added
+- User documentation set: `docs/getting-started.md`, `docs/channels.md`, `docs/configuration-reference.md`; README rewritten around a feature matrix and quick start (#70)
+- Multi-arch Docker builds (`linux/amd64`, `linux/arm64`) published to GHCR via QEMU + Buildx in the release workflow (#71)
+- Helm chart updated to expose all current config options; chart version bumped (#72)
+- `GET /admin/audit` security posture endpoint: scored report over `api_token`, `dashboard_auth`, `rate_limiting`, `shell_approval`, `message_dedup`, and `tls` checks; `HTTPServer.SetConfig` wires gateway config into the handler (#73)
+
+### Changed
+- `docs/openclaw-comparison-2026-03.md` updated to v0.14.0; exec approval gates and security audit endpoint marked resolved (#74)
+
+### Fixed
+- `internal/gateway/router.go`: `llmClientAdapter` implements `patterns.LLMClient.Complete(ctx, messages, ...agenkit.CallOption)` instead of the removed `Chat` method — upstream agenkit converged its LLM protocols on `Complete`, which broke compilation
+- Build no longer depends on a sibling `../agenkit/agenkit-go` checkout: the `replace` directive is dropped in favour of a pinned published version, and `go.work`/`go.work.sum` are untracked and gitignored. Restores clean-checkout CI, `docker build`, and `go install ...@latest`
+
+## [0.13.0] - 2026-03-18
+
+### Added
+- Signal channel via signal-cli JSON-RPC WebSocket bridge (requires signal-cli ≥ 0.13.0) (#65)
+- LLM USD cost tracking with a static pricing table; `GET /v1/usage` endpoint; Prometheus counter `bucktooth_llm_cost_dollars_total{provider,model}` (#66)
+- GitHub Actions CI workflow (push/PR) and release workflow (`v*` tag → GHCR image + GitHub release) (#67)
+- `make ci` and `make release-tag` Makefile targets (#67)
+- Harness integration tests: `TestModelsEndpoint`, `TestSkillsDepsEndpoint`, `TestUsageEndpoint`, `TestSignalChannelUnavailable` (#68)
+
+### Changed
+- `docs/openclaw-comparison-2026-03.md` updated to v0.13.0 (#69)
+
+## [0.12.0] - 2026-03-18
+
+### Added
+- ClawHub `SKILL.md` dependency validation: new `internal/skills` package with `DepChecker`, `ParseSkillMeta`, `CheckAll`; validates binaries via `exec.LookPath` and env vars from SKILL.md frontmatter; skills with unmet deps are dropped with a warn log; `GET /admin/skills/deps` returns `[]DepResult`; gated by `skills.dep_check_enabled` (#61)
+- Browser automation tool via Chrome CDP (`github.com/chromedp/chromedp`): `navigate`, `click`, `type`, `screenshot` (base64 PNG), `extract`; stateless per-call context; gated by `tools.browser_enabled` / `tools.browser_timeout` (#62)
+- OpenAI-compatible `GET /v1/models` endpoint returning a static model list for the configured provider; protected by `apiTokenMiddleware` (#63)
+
+### Changed
+- `docs/openclaw-comparison-2026-03.md` updated to v0.12.0; Signal channel and ClawMetry deferred (#64)
+
+## [0.11.0] - 2026-03-18
+
+### Added
+- WebSocket token streaming: inbound `stream:true` flag, `chunk`/`done`/`error` frames, per-connection write mutex, gated by `StreamingEnabled`
+- `AgentRouter.StreamMessage` + `streamConversational` using `llmRaw.Stream()`; ReAct and planning modes emit a single-chunk simulated stream
+- OpenAI-compatible `POST /v1/chat/completions`: non-streaming JSON plus SSE streaming with a per-response write-deadline bypass for long streams
+- Temporal memory decay in `HybridStore` — `exp(-age*ln2/halfLife)` replaces linear recency; configurable via `decay_enabled` / `decay_half_life_hours`
+- Token-based compaction trigger in `Summarizer`: fires when the estimated token count (chars/4) exceeds `summarize_token_threshold`
+- Optional Teams HMAC activity validation via `security_token`; checks `Authorization: HMAC <base64-sha256>` (opt-in, backward compatible)
+
+### Fixed
+- `Summarizer`: `GetHistory(…, 0)` returned zero rows inside the inner goroutine, so compaction never ran
+
+### Changed
+- `docs/openclaw-comparison-2026-03.md` updated to v0.11.0
+
+## [0.10.0] - 2026-03-18
+
+### Added
+- Long-message chunking per platform: `Chunker.Split` with paragraph/sentence/word boundary preference and a 100 ms inter-chunk delay (#54)
+- Message deduplication ring buffer: SHA-256 keying, 5-minute TTL, configurable window size (#55)
+- LLM retry with exponential backoff and ±20% jitter; retries on 429/503/529 and deadline-exceeded (#56)
+- Attachment auto-routing to the `pdf_analyze` / `image_analyze` tools (#57)
+- Channel-aware response auto-formatting: Slack mrkdwn, Telegram MarkdownV2, WhatsApp, Teams (#58)
+- LLM provider fallback chain — `FallbackLLM` wraps multiple providers (#59)
+- Config additions: `ChunkingEnabled`, `ChunkingLimits`, `DedupEnabled`, `DedupWindowSize`, `AutoFormatEnabled`, `AutoProcessAttachments` (`GatewayConfig`); `RetryAttempts`, `RetryInitialBackoff`, `FallbackProviders` (`AgentConfig`)
+
+### Changed
+- `docs/openclaw-comparison-2026-03.md` updated to v0.10.0 (#60)
+
+## [0.9.0] - 2026-03-18
+
+### Added
+- Per-user rate limiting: `internal/gateway/ratelimiter.go` with a lazy per-user `golang.org/x/time/rate` token bucket; `RateLimitConfig` (`enabled`, `requests_per_minute`, `burst`) plus `BUCKTOOTH_RATE_LIMIT_RPM` env override; enforced at the top of `ProcessMessage` (#47)
+- BM25 hybrid memory: `internal/memory/bm25.go` (inline scorer, k1=1.5, b=0.75, no external deps) and `internal/memory/hybrid.go` (`HybridStore` blending BM25 with recency); `memory.type: hybrid` + `hybrid_weight` (#48)
+- `pdf_analyze` tool via direct Anthropic HTTP (`pdfs-2024-09-25` beta); URL and sandbox-constrained local paths; 32 MB limit (#49)
+- `image_analyze` tool via the Anthropic vision API; auto-detects media type; jpeg/png/gif/webp; 5 MB limit (#50)
+- Cron scheduler: `internal/cron/scheduler.go` with a `time.Ticker`-based job engine; `CronConfig`/`CronJobConfig`; `GET /cron/jobs`; wired into gateway `Start`/`Stop` (#51)
+- Admin API: `GET /admin/memory/{user_id}/flush`, `POST /admin/skills/reload`, `GET /admin/channels/health`; `SetMemoryStore` setter (#52)
+- `/system <prompt>` command for a per-user system-prompt override, `/system reset` to clear; `UserPrefs` extended with a `systemPrompts` map; `getOrCreateAgent` honours the override (#53)
+
+### Fixed
+- WebSocket `CheckOrigin` now validates against an `AllowedWSOrigins` allowlist (nil = allow-all for dev) instead of accepting every origin (#46)
+- WebSocket handler dispatches to the agent router instead of echoing; JSON `wsInboundMsg`/`wsOutboundMsg` wire format (#46)
+
+### Changed
+- `tools.FromConfig` signature accepts `AgentConfig` for API-key access
+
 ## [0.8.0] - 2026-03-18
 
 ### Added

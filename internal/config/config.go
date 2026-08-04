@@ -42,21 +42,21 @@ type MCPServerConfig struct {
 
 // GatewayConfig configures the gateway server
 type GatewayConfig struct {
-	WebSocketPort         int            `yaml:"websocket_port"`
-	HTTPPort              int            `yaml:"http_port"`
-	LogLevel              string         `yaml:"log_level"`
-	ShutdownTimeout       time.Duration  `yaml:"shutdown_timeout"`
-	TestChannel           bool           `yaml:"test_channel"`
-	DashboardAuthPassword string         `yaml:"dashboard_auth_password"`
-	APIToken              string         `yaml:"api_token"`          // optional; if set, all non-probe routes require Bearer auth
-	AllowedWSOrigins      []string       `yaml:"allowed_ws_origins"`  // nil = allow all (dev)
-	StreamingEnabled      bool           `yaml:"streaming_enabled"`   // enables WS token streaming; default false
-	ChunkingEnabled       bool           `yaml:"chunking_enabled"`    // default true
-	ChunkingLimits        map[string]int `yaml:"chunking_limits"`    // per-channel-type char limits (overrides defaults)
-	DedupEnabled          bool           `yaml:"dedup_enabled"`      // default true
-	DedupWindowSize       int            `yaml:"dedup_window_size"`  // ring buffer size, default 256
-	AutoFormatEnabled     bool           `yaml:"auto_format_enabled"`     // default true
-	AutoProcessAttachments bool          `yaml:"auto_process_attachments"` // default true
+	WebSocketPort          int            `yaml:"websocket_port"`
+	HTTPPort               int            `yaml:"http_port"`
+	LogLevel               string         `yaml:"log_level"`
+	ShutdownTimeout        time.Duration  `yaml:"shutdown_timeout"`
+	TestChannel            bool           `yaml:"test_channel"`
+	DashboardAuthPassword  string         `yaml:"dashboard_auth_password"`
+	APIToken               string         `yaml:"api_token"`                // optional; if set, all non-probe routes require Bearer auth
+	AllowedWSOrigins       []string       `yaml:"allowed_ws_origins"`       // nil = allow all (dev)
+	StreamingEnabled       bool           `yaml:"streaming_enabled"`        // enables WS token streaming; default false
+	ChunkingEnabled        bool           `yaml:"chunking_enabled"`         // default true
+	ChunkingLimits         map[string]int `yaml:"chunking_limits"`          // per-channel-type char limits (overrides defaults)
+	DedupEnabled           bool           `yaml:"dedup_enabled"`            // default true
+	DedupWindowSize        int            `yaml:"dedup_window_size"`        // ring buffer size, default 256
+	AutoFormatEnabled      bool           `yaml:"auto_format_enabled"`      // default true
+	AutoProcessAttachments bool           `yaml:"auto_process_attachments"` // default true
 }
 
 // RateLimitConfig configures per-user token-bucket rate limiting.
@@ -74,7 +74,7 @@ type CronConfig struct {
 // CronJobConfig configures a single scheduled job.
 type CronJobConfig struct {
 	Name      string `yaml:"name"`
-	Schedule  string `yaml:"schedule"`   // time.Duration string, e.g. "5m", "1h"
+	Schedule  string `yaml:"schedule"` // time.Duration string, e.g. "5m", "1h"
 	Message   string `yaml:"message"`
 	ChannelID string `yaml:"channel_id"`
 	UserID    string `yaml:"user_id"`
@@ -119,7 +119,7 @@ type ToolsConfig struct {
 	PDF            ToolConfig `yaml:"pdf"`
 	Image          ToolConfig `yaml:"image"`
 	BrowserEnabled bool       `yaml:"browser_enabled"` // enable Chrome CDP browser tool; default false
-	BrowserTimeout int        `yaml:"browser_timeout"`  // per-action timeout in seconds; default 30
+	BrowserTimeout int        `yaml:"browser_timeout"` // per-action timeout in seconds; default 30
 }
 
 // ToolConfig configures a specific tool

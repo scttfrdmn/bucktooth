@@ -44,3 +44,7 @@ release/
 
 # Dependencies
 vendor/
+
+# Go workspace (local agenkit-go development only)
+go.work
+go.work.sum

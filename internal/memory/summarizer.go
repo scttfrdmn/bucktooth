@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/scttfrdmn/agenkit/agenkit-go/agenkit"
 	"github.com/scttfrdmn/agenkit/agenkit-go/adapter/llm"
+	"github.com/scttfrdmn/agenkit/agenkit-go/agenkit"
 )
 
 // Summarizer compresses long conversation histories using the LLM.

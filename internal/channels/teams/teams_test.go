@@ -40,10 +40,10 @@ func signBody(body []byte, secret string) string {
 func buildActivityBody(t *testing.T) []byte {
 	t.Helper()
 	activity := map[string]any{
-		"type": "message",
-		"id":   "act-1",
-		"text": "hello teams",
-		"from": map[string]string{"id": "u1", "name": "User One"},
+		"type":         "message",
+		"id":           "act-1",
+		"text":         "hello teams",
+		"from":         map[string]string{"id": "u1", "name": "User One"},
 		"conversation": map[string]string{"id": "conv-1"},
 		"serviceUrl":   "https://smba.trafficmanager.net/",
 	}

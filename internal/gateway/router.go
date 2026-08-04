@@ -52,8 +52,8 @@ type llmClientAdapter struct {
 	llm llm.LLM
 }
 
-func (a *llmClientAdapter) Chat(ctx context.Context, messages []*agenkit.Message) (*agenkit.Message, error) {
-	return a.llm.Complete(ctx, messages)
+func (a *llmClientAdapter) Complete(ctx context.Context, messages []*agenkit.Message, opts ...agenkit.CallOption) (*agenkit.Message, error) {
+	return a.llm.Complete(ctx, messages, opts...)
 }
 
 // llmAgent wraps an llm.LLM as a stateless agenkit.Agent for use inside ReActAgent.

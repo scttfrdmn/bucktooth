@@ -215,6 +215,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Gateway, error) {
 	if costTracker != nil {
 		httpServer.SetCostTracker(costTracker)
 	}
+	httpServer.SetConfig(cfg)
 
 	// Register test channel routes and channel before the gateway struct is created.
 	if cfg.Gateway.TestChannel {

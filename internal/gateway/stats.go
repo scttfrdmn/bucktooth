@@ -17,7 +17,7 @@ type RecentMessage struct {
 	ChannelID string    `json:"channel_id"`
 	UserID    string    `json:"user_id"`
 	Preview   string    `json:"content_preview"` // first 120 runes
-	Direction string    `json:"direction"`        // "in" or "out"
+	Direction string    `json:"direction"`       // "in" or "out"
 }
 
 // Stats tracks message counters and a fixed-size recent-message ring buffer.

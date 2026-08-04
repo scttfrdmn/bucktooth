@@ -2,21 +2,37 @@
 
 ## Project Overview
 
-BuckTooth is a multi-channel AI assistant gateway (v0.1.0) written in Go. It connects messaging platforms (Discord, WhatsApp, Telegram, Slack) to Claude AI via the Agenkit-Go SDK.
+BuckTooth is a multi-channel AI assistant gateway (v0.14.0) written in Go. It connects six messaging platforms (Discord, Telegram, WhatsApp, Slack, Microsoft Teams, Signal) to seven LLM providers via the Agenkit-Go SDK.
 
 - **GitHub**: https://github.com/scttfrdmn/bucktooth
 - **License**: Apache 2.0
 - **Go module**: `github.com/scttfrdmn/bucktooth`
+- **Agenkit module**: `github.com/scttfrdmn/agenkit/agenkit-go` (monorepo subdirectory), pinned to a published pseudo-version
+
+### Local agenkit-go development
+
+`go.work` is intentionally **untracked and gitignored**. Committing it breaks
+every clean checkout, CI, and `docker build`, because it references a sibling
+`../agenkit/agenkit-go` path that only exists on a dev machine. For the same
+reason there is no `replace` directive in `go.mod`.
+
+To iterate against a local agenkit-go checkout, create the workspace locally:
+
+```bash
+go work init . ../agenkit/agenkit-go   # local only — never commit
+```
+
+Before pushing, verify the build works *without* the workspace: `GOWORK=off go build ./...`
 
 ## Build & Run Commands
 
 ```bash
 # Build
-make build          # Produces bin/BuckTooth
-go build -o bin/BuckTooth ./cmd/gateway
+make build          # Produces bin/bucktooth
+go build -o bin/bucktooth ./cmd/bucktooth
 
 # Run
-make run            # go run ./cmd/gateway
+make run            # go run ./cmd/bucktooth
 make run-debug      # with --log-level debug
 
 # Test
@@ -53,14 +69,23 @@ make deps           # go mod download && go mod tidy
 | `area:` | Codebase area | `area:gateway`, `area:channels`, `area:agents`, `area:memory`, `area:config`, `area:observability`, `area:tools`, `area:api` |
 | `priority:` | Urgency | `priority:critical`, `priority:high`, `priority:medium`, `priority:low` |
 | `status:` | Current state | `status:blocked`, `status:in-progress`, `status:needs-review` |
-| `platform:` | Target platform | `platform:discord`, `platform:whatsapp`, `platform:telegram`, `platform:slack` |
+| `platform:` | Target platform | `platform:discord`, `platform:whatsapp`, `platform:telegram`, `platform:slack`, `platform:teams`, `platform:signal` |
 
 ### Milestones
 
-- **v0.1.0 - Foundation** (closed) — current codebase
-- **v0.2.0 - Tools & Multi-Channel** — tool registry, WhatsApp, Redis memory
-- **v0.3.0 - Platform Expansion** — Telegram, Slack, planning agent, observability
-- **v1.0.0 - Production Ready** — Docker, Kubernetes, web dashboard, CLI
+Releases v0.1.0 through v0.14.0 have shipped; see `CHANGELOG.md` for the
+per-version breakdown and `gh api repos/scttfrdmn/bucktooth/milestones` for
+current state. Recent themes:
+
+- **v0.9.0 - Connections & Tooling** — rate limiting, BM25 hybrid memory, PDF/image tools, cron, admin API
+- **v0.10.0 - Reliability & Quality** — chunking, dedup, retry/backoff, fallback chain
+- **v0.11.0 - Streaming & Intelligence** — WS token streaming, `/v1/chat/completions`, temporal decay
+- **v0.12.0 - Ecosystem & Automation** — SKILL.md dep validation, browser automation, `/v1/models`
+- **v0.13.0 - Signal, Observability & CI/CD** — Signal channel, cost tracking, GitHub Actions
+- **v0.14.0 - Docs, Deployment & Security Hardening** — user docs, multi-arch GHCR, Helm, `/admin/audit`
+
+**When cutting a release, close its milestone's issues.** Issues from shipped
+milestones were repeatedly left open; `make release-tag` does not close them.
 
 ## CRITICAL: Parity Tracking
 
@@ -81,28 +106,51 @@ Before proposing or planning any milestone:
 ## Architecture
 
 ```
-cmd/gateway/main.go          # Entry point
+cmd/bucktooth/               # Entry point (cobra CLI)
+│   main.go
+│   cmd/                     # start, status, config, mcp, version, completion
 internal/
 ├── gateway/                 # Core gateway
-│   ├── gateway.go           # Gateway struct, lifecycle
-│   ├── router.go            # Message routing to agents
-│   ├── http.go              # HTTP API server (:8080)
-│   ├── websocket.go         # WebSocket server (:18789)
-│   └── eventbus.go          # Internal event bus
-├── channels/                # Platform adapters
+│   ├── gateway.go           # Gateway struct, lifecycle, backend wiring
+│   ├── router.go            # AgentRouter — per-user agent isolation
+│   ├── http.go              # HTTP API server (:8080), admin + /v1 endpoints
+│   ├── websocket.go         # WebSocket server (:18789), token streaming
+│   ├── eventbus.go          # Internal event bus
+│   ├── stats.go             # Atomic counters + recent-message ring buffer
+│   ├── chunker.go           # Per-platform long-message splitting
+│   ├── deduplicator.go      # SHA-256 dedup ring buffer
+│   ├── formatter.go         # Channel-aware markdown formatting
+│   ├── retryllm.go          # Exponential backoff + jitter
+│   ├── fallbackllm.go       # Multi-provider fallback chain
+│   ├── stubllm.go           # Zero-credential test LLM
+│   ├── ratelimiter.go       # Per-user token bucket
+│   ├── costtracker.go       # LLM USD cost accounting
+│   └── userprefs.go         # Per-user channel + system-prompt overrides
+├── channels/                # Platform adapters (one package each)
 │   ├── channel.go           # Channel interface
 │   ├── base.go              # Base channel implementation
-│   └── discord/discord.go   # Discord adapter
-├── agents/                  # Agent implementations (planned)
-├── tools/                   # Tool implementations (planned)
-├── memory/                  # Conversation memory
-│   ├── memory.go            # Memory interface
-│   └── inmemory.go          # In-memory store
-└── config/                  # Configuration
-    ├── config.go             # Config structs
-    └── loader.go             # YAML/env loading
+│   ├── discord/ telegram/ whatsapp/ slack/ teams/ signal/
+│   ├── testchan/            # Harness test channel
+│   └── webhook/verify.go    # HMAC-SHA256 verification middleware
+├── agents/planning.go       # PlanningAgent + ToolStepExecutor
+├── tools/                   # calculator, filesystem, websearch, webfetch,
+│                            # calendar, shell, pdf, image, browser, message
+│   ├── tool.go              # Tool interface + Registry
+│   └── from_config.go       # Shared by gateway and `mcp serve`
+├── memory/                  # inmemory, redis, sqlite, vector, hybrid (BM25)
+│   ├── memory.go            # Store interface
+│   └── summarizer.go        # Async LLM conversation compaction
+├── skills/depcheck.go       # ClawHub SKILL.md dependency validation
+├── cron/scheduler.go        # Ticker-based job engine
+├── observability/           # Prometheus metrics + OTel tracing
+└── config/                  # config.go (structs), loader.go (YAML/env)
+harness/                     # Integration tests (//go:build integration)
+bench/                       # Benchmarks
+charts/bucktooth/            # Helm chart
+web/                         # Embedded dashboard assets
 configs/gateway.yaml         # Example configuration
-docs/architecture.md         # Architecture documentation
+docs/                        # getting-started, channels, configuration-reference,
+                             # architecture, docker, migration, benchmarks, parity
 ```
 
 ### Key Interfaces
@@ -127,33 +175,60 @@ type Store interface {
 
 ## API Endpoints
 
+Probes (always unauthenticated):
+- `GET /live` — Liveness (always 200)
+- `GET /ready` — Readiness (503 if no channel operational)
+
+Core:
 - `GET /health` — Health check with channel status
 - `GET /status` — Detailed status
 - `GET /metrics` — Prometheus metrics
-- `WS /ws` — WebSocket (port 18789)
+- `WS /ws` — WebSocket (port 18789), supports token streaming
+- `GET /dashboard`, `GET /dashboard/data` — Dashboard (optional Basic auth)
+
+Admin (Bearer-token protected when `api_token` is set):
+- `GET /admin/audit` — Security posture report
+- `GET /admin/memory/{user_id}/flush`, `POST /admin/skills/reload`
+- `GET /admin/skills/deps`, `GET /admin/channels/health`
+
+OpenAI-compatible:
+- `POST /v1/chat/completions` (JSON + SSE), `GET /v1/models`, `GET /v1/usage`
+
+See `docs/configuration-reference.md` for the full list.
 
 ## Configuration
 
 Required environment variables:
-- `DISCORD_BOT_TOKEN` — Discord bot token
-- `ANTHROPIC_API_KEY` — Anthropic API key
+- `ANTHROPIC_API_KEY` — Anthropic API key (or the equivalent for another provider)
+- At least one channel credential, e.g. `DISCORD_BOT_TOKEN`
 
 Optional:
+- `BUCKTOOTH_API_TOKEN` — Bearer token for API auth
+- `BUCKTOOTH_RATE_LIMIT_RPM`, `BUCKTOOTH_SKILLS_PATH`, `BUCKTOOTH_WS_ALLOWED_ORIGINS`
+- `DASHBOARD_AUTH_PASSWORD` — Enables dashboard Basic auth
 - `LOBSTER_GATEWAY_PORT` — HTTP port (default: 8080)
 - `LOBSTER_WEBSOCKET_PORT` — WebSocket port (default: 18789)
 - `LOBSTER_LOG_LEVEL` — Log level (debug/info/warn/error)
+- `LOBSTER_LLM_MODEL` — Model override
+
+Note: the four `LOBSTER_*` names are pre-rename leftovers that are still what
+the loader reads. Renaming them to `BUCKTOOTH_*` is a breaking change and needs
+a deprecation cycle — don't "fix" them in docs without changing `internal/config/loader.go`.
 
 ## Key Conventions
 
 - **Error handling**: Wrap errors with `fmt.Errorf("context: %w", err)`
-- **Logging**: Use structured logging via `slog`
+- **Logging**: Structured logging via `github.com/rs/zerolog` (not `slog`); pass a `zerolog.Logger` down through constructors
 - **Context**: Always propagate `context.Context` as first parameter
-- **Testing**: Table-driven tests; integration tests use real dependencies (no mocks for DB/external systems)
+- **Testing**: Table-driven tests; integration tests use real dependencies (no mocks for DB/external systems) and sit behind `//go:build integration`
 - **Commits**: Conventional commits format (`feat:`, `fix:`, `docs:`, `chore:`, etc.)
 
 ## Dependencies
 
-- `github.com/scttfrdmn/agenkit-go` — AI agent framework (Agenkit SDK)
+- `github.com/scttfrdmn/agenkit/agenkit-go` — AI agent framework (Agenkit SDK)
 - `github.com/bwmarrin/discordgo` — Discord API
+- `github.com/rs/zerolog` — Structured logging
+- `github.com/spf13/cobra` — CLI
+- `github.com/prometheus/client_golang`, `go.opentelemetry.io/otel` — Observability
+- `modernc.org/sqlite` — Pure-Go SQLite (no CGO)
 - `gopkg.in/yaml.v3` — YAML config parsing
-- `github.com/joho/godotenv` — .env file loading

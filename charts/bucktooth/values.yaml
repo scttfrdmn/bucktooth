@@ -41,6 +41,10 @@ config:
       enabled: false
     whatsapp:
       enabled: false
+    teams:
+      enabled: false
+    signal:
+      enabled: false
   tools:
     calculator:
       enabled: true
@@ -52,6 +56,19 @@ config:
       enabled: false
     calendar:
       enabled: false
+    shell:
+      enabled: false
+      options:
+        require_approval: true
+        allowed_commands: []
+    pdf:
+      enabled: false
+    image:
+      enabled: false
+    browser_enabled: false
+  observability:
+    cost_tracking:
+      enabled: false
 
 secrets:
   anthropicApiKey: ""
@@ -60,6 +77,10 @@ secrets:
   slackBotToken: ""
   slackAppToken: ""
   braveSearchApiKey: ""
+  teamsAppId: ""
+  teamsAppPassword: ""
+  signalPhoneNumber: ""
+  signalSignaldUrl: ""
 
 redis:
   enabled: true

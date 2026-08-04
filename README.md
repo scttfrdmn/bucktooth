@@ -1,244 +1,111 @@
-# BuckTooth - Multi-Channel AI Assistant Gateway
+# BuckTooth — Multi-Channel AI Assistant Gateway
 
-**"No Claws All Teeth!"** 🦫
+**"No Claws All Teeth!"** &nbsp;·&nbsp; v0.14.0 &nbsp;·&nbsp; [![Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE) [![CI](https://github.com/scttfrdmn/bucktooth/actions/workflows/ci.yml/badge.svg)](https://github.com/scttfrdmn/bucktooth/actions/workflows/ci.yml)
 
-BuckTooth is a high-performance personal AI assistant that connects to messaging platforms (Discord, WhatsApp, Telegram, Slack) where users interact with it naturally through chat. Built with Go and Agenkit-Go for 18x better performance than the original OpenClaw.
+BuckTooth is a high-performance single-binary AI assistant gateway written in Go. It connects six messaging platforms to seven LLM providers via the [Agenkit-Go](https://github.com/scttfrdmn/agenkit-go) SDK, with conversation memory, tool use, skills, and production-grade observability — all in a ~25 MB binary.
 
-**Version:** 0.1.0 | **License:** Apache 2.0 | **Copyright:** 2026 Scott Friedman
-
-![BuckTooth Logo](logo.png)
+---
 
 ## Features
 
-- **Multi-Channel Support**: Discord (Phase 1), WhatsApp, Telegram, Slack (coming soon)
-- **Conversational AI**: Powered by Claude via Agenkit-Go
-- **Memory**: Maintains conversation context across channels
-- **Production-Ready**: Built-in observability, metrics, and health checks
-- **Single Binary**: Easy deployment with minimal dependencies
+| Category | Details |
+|----------|---------|
+| **Channels** | Discord, Telegram, WhatsApp, Slack, Microsoft Teams, Signal |
+| **LLM providers** | Anthropic Claude, OpenAI, OpenAI-compatible (vLLM/llama.cpp), Google Gemini, AWS Bedrock, Ollama, LiteLLM |
+| **Memory backends** | In-memory, Redis, SQLite, vector (cosine), hybrid BM25+vector |
+| **Tools** | Calculator, file system, web search, web fetch, calendar, shell (with approval gates), PDF, image analysis, browser automation |
+| **Observability** | Prometheus metrics, OpenTelemetry tracing, LLM cost tracking, real-time dashboard |
+| **Reliability** | LLM retry/backoff, fallback provider chains, message deduplication, per-platform chunking |
+| **API** | OpenAI-compatible `/v1/chat/completions` + `/v1/models`, WebSocket token streaming |
+| **Deployment** | Single binary, Docker, Helm chart, GitHub Actions CI/CD, multi-arch (amd64 + arm64) |
+
+---
 
 ## Quick Start
 
-### Prerequisites
-
-- Go 1.23 or higher
-- Discord bot token (get from [Discord Developer Portal](https://discord.com/developers/applications))
-- Anthropic API key (get from [Anthropic Console](https://console.anthropic.com))
-
-### Installation
-
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd BuckTooth
+# 1. Install
+go install github.com/scttfrdmn/bucktooth/cmd/bucktooth@latest
+# or: git clone https://github.com/scttfrdmn/bucktooth && make build
 
-# Build
-go build -o BuckTooth ./cmd/gateway
+# 2. Set credentials
+export ANTHROPIC_API_KEY=sk-ant-...
+export DISCORD_BOT_TOKEN=...
 
-# Or use go run
-go run ./cmd/gateway
+# 3. Start
+bucktooth start --config configs/gateway.yaml
+
+# 4. Verify
+curl -s localhost:8080/health | jq .
 ```
 
-### Configuration
+The web dashboard is available at **http://localhost:8080**.
 
-Create a `.env` file or export environment variables:
+---
 
-```bash
-export DISCORD_BOT_TOKEN=your_discord_bot_token
-export ANTHROPIC_API_KEY=your_anthropic_api_key
-```
+## Documentation
 
-Or create a configuration file:
+| Guide | Description |
+|-------|-------------|
+| [Getting Started](docs/getting-started.md) | First-time setup walkthrough |
+| [Configuration Reference](docs/configuration-reference.md) | Every config key documented |
+| [Channel Setup](docs/channels.md) | Per-platform bot setup (Discord, Telegram, WhatsApp, Slack, Teams, Signal) |
+| [Architecture](docs/architecture.md) | Component overview and message flow |
+| [Docker](docs/docker.md) | Docker Compose deployment |
+| [Migration](docs/migration.md) | Upgrading from OpenClaw or earlier BuckTooth versions |
 
-```yaml
-# config.yaml
-gateway:
-  websocket_port: 18789
-  http_port: 8080
-  log_level: info
+---
 
-channels:
-  discord:
-    enabled: true
-    auth:
-      token: ${DISCORD_BOT_TOKEN}
+## Architecture Overview
 
-agents:
-  llm_provider: anthropic
-  llm_model: claude-sonnet-4-5-20250220
-  api_key: ${ANTHROPIC_API_KEY}
-  max_history: 20
-  temperature: 0.7
-```
+BuckTooth is a single event-driven process. Inbound messages from any channel flow through deduplication → agent router → LLM → channel-aware formatting → platform delivery. All components share one in-process event bus.
 
-### Running
+See [docs/architecture.md](docs/architecture.md) for the full component diagram and message flow.
 
-```bash
-# Using environment variables
-./BuckTooth
-
-# Using config file
-./BuckTooth --config config.yaml
-
-# With custom log level
-./BuckTooth --log-level debug
-```
-
-## Usage
-
-1. Invite your Discord bot to a server
-2. Start BuckTooth
-3. Send a message to the bot in Discord
-4. The bot will respond using Claude AI
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  BuckTooth Gateway (Single Go Binary)                     │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │ WebSocket Server (:18789) + HTTP API (:8080)    │   │
-│  │ - Channel Registry & Lifecycle                  │   │
-│  │ - Message Router & Event Bus                    │   │
-│  │ - Metrics & Health Checks                       │   │
-│  └─────────────────────────────────────────────────┘   │
-│           │                                             │
-│  ┌────────┴────────┬──────────┬──────────┐            │
-│  │ Discord Channel │ WhatsApp │ Telegram │ Slack...   │
-│  └────────┬────────┴──────────┴──────────┘            │
-│           │                                             │
-│  ┌────────▼────────────────────────────────────────┐  │
-│  │ Agent Router (Agenkit ConversationalAgent)      │  │
-│  └────────┬────────────────────────────────────────┘  │
-│           │                                             │
-│  ┌────────▼────────────────────────────────────────┐  │
-│  │ Memory Store (In-Memory)                         │  │
-│  └──────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
-```
+---
 
 ## API Endpoints
 
-- `GET /health` - Health check (returns channel status)
-- `GET /status` - Detailed status information
-- `GET /metrics` - Prometheus metrics
-- `WS /ws` - WebSocket connection (port 18789)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Channel health check |
+| GET | `/live` | Kubernetes liveness probe |
+| GET | `/ready` | Kubernetes readiness probe |
+| GET | `/status` | Detailed gateway status |
+| GET | `/metrics` | Prometheus metrics |
+| GET | `/dashboard/data` | Dashboard JSON snapshot |
+| POST | `/v1/chat/completions` | OpenAI-compatible completions (streaming + non-streaming) |
+| GET | `/v1/models` | OpenAI-compatible model list |
+| GET | `/v1/usage` | LLM cost and token totals |
+| GET | `/admin/audit` | Security posture report |
+| GET | `/admin/channels/health` | Per-channel health detail |
+| POST | `/admin/skills/reload` | Hot-reload agent skills |
+| GET | `/cron/jobs` | List scheduled cron jobs |
 
-## Development
+---
 
-### Project Structure
-
-```
-BuckTooth/
-├── cmd/
-│   └── gateway/          # Main gateway binary
-├── internal/
-│   ├── gateway/          # Gateway implementation
-│   ├── channels/         # Channel adapters (Discord, etc.)
-│   ├── agents/           # Agent configurations
-│   ├── tools/            # Tool implementations
-│   ├── memory/           # Memory management
-│   └── config/           # Configuration
-├── configs/              # Configuration files
-└── docs/                 # Documentation
-```
-
-### Building
+## Building from Source
 
 ```bash
-# Build for current platform
-go build -o BuckTooth ./cmd/gateway
+# Build
+make build          # produces bin/bucktooth
 
-# Build for Linux
-GOOS=linux GOARCH=amd64 go build -o BuckTooth-linux ./cmd/gateway
+# Test
+make test           # go test -v ./...
+make test-race      # with race detector
 
-# Build with optimizations
-go build -ldflags="-s -w" -o BuckTooth ./cmd/gateway
+# Quality
+make check          # fmt + vet + lint + test
 ```
 
-### Testing
-
-```bash
-# Run tests
-go test ./...
-
-# Run tests with coverage
-go test -cover ./...
-
-# Run tests with race detector
-go test -race ./...
-```
-
-## Configuration Reference
-
-See [configs/gateway.yaml](configs/gateway.yaml) for a complete configuration example.
-
-### Environment Variables
-
-- `DISCORD_BOT_TOKEN` - Discord bot token
-- `ANTHROPIC_API_KEY` - Anthropic API key
-- `LOBSTER_GATEWAY_PORT` - HTTP port (default: 8080)
-- `LOBSTER_WEBSOCKET_PORT` - WebSocket port (default: 18789)
-- `LOBSTER_LOG_LEVEL` - Log level (debug, info, warn, error)
-
-## Roadmap
-
-### Phase 1: Foundation ✅
-- [x] Gateway core
-- [x] Discord channel
-- [x] Conversational agent
-- [x] In-memory storage
-- [x] Basic observability
-
-### Phase 2: Tools & Multi-Channel (In Progress)
-- [ ] Tool registry
-- [ ] Calculator, Message, FileSystem tools
-- [ ] WhatsApp channel
-- [ ] Cross-channel messaging
-
-### Phase 3: Expansion
-- [ ] Telegram channel
-- [ ] Slack channel
-- [ ] Planning agent
-- [ ] Calendar & Web Search tools
-- [ ] OpenTelemetry tracing
-
-### Phase 4: Polish
-- [ ] Web dashboard
-- [ ] Enhanced CLI
-- [ ] Docker image
-- [ ] Kubernetes manifests
-- [ ] Migration tool from OpenClaw
-
-## Versioning
-
-This project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). See [CHANGELOG.md](CHANGELOG.md) for details.
-
-Current version: **0.1.0**
+---
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or submit a pull request.
+Issues and pull requests welcome. Please open a GitHub issue before submitting large changes.
+
+---
 
 ## License
 
-Copyright 2026 Scott Friedman
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
-See [LICENSE](LICENSE) for the full license text.
-
-## Acknowledgments
-
-- Built with [Agenkit-Go](https://github.com/scttfrdmn/agenkit-go)
-- Inspired by [OpenClaw](https://github.com/openclaw/openclaw)
-- Powered by [Anthropic Claude](https://www.anthropic.com)
+Copyright 2026 Scott Friedman. Licensed under the [Apache License 2.0](LICENSE).

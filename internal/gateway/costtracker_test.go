@@ -65,9 +65,9 @@ func TestCostTrackerTrackAndSummary(t *testing.T) {
 func TestCostTrackerMultipleModels(t *testing.T) {
 	ct := NewCostTracker()
 
-	ct.Track("anthropic", "claude-sonnet-4-5", 1_000_000, 0)  // $3.0
-	ct.Track("openai", "gpt-4o", 1_000_000, 0)                // $5.0
-	ct.Track("anthropic", "claude-sonnet-4-5", 1_000_000, 0)  // $3.0 more
+	ct.Track("anthropic", "claude-sonnet-4-5", 1_000_000, 0) // $3.0
+	ct.Track("openai", "gpt-4o", 1_000_000, 0)               // $5.0
+	ct.Track("anthropic", "claude-sonnet-4-5", 1_000_000, 0) // $3.0 more
 
 	summary := ct.Summary()
 	if summary.TotalCostUSD != 11.0 {

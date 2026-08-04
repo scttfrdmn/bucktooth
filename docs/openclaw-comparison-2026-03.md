@@ -1,7 +1,7 @@
 # BuckTooth vs OpenClaw — Feature Gap Analysis
 
-**Date**: 2026-03-18 (updated 2026-03-18 for v0.13.0)
-**BuckTooth version**: v0.13.0
+**Date**: 2026-03-18 (updated 2026-03-18 for v0.14.0)
+**BuckTooth version**: v0.14.0
 **OpenClaw version**: v2026.3.13 (released 2026-03-14)
 
 OpenClaw ([github.com/openclaw/openclaw](https://github.com/openclaw/openclaw)) is a TypeScript/Node.js
@@ -16,7 +16,7 @@ runtime profile (single binary, low memory, Kubernetes-native).
 | Attribute | BuckTooth | OpenClaw |
 |-----------|-----------|---------|
 | Language | Go | TypeScript / Node.js ≥22 |
-| Version | v0.13.0 | v2026.3.13 |
+| Version | v0.14.0 | v2026.3.13 |
 | Binary | Single static binary (~25 MB) | Node.js runtime required |
 | License | Apache 2.0 | MIT |
 | Helm chart | ✅ | ❌ |
@@ -159,9 +159,9 @@ completing the core ClawHub compatibility layer.
 | Rate limiting (per-user token bucket) | ✅ v0.9.0 | ✅ |
 | Message deduplication | ✅ v0.10.0 | ✅ |
 | Device pairing with approval | ❌ | ✅ |
-| Exec approval gates | ❌ | ✅ |
+| Exec approval gates | ✅ v0.8.0 | ✅ |
 | Filesystem sandboxing | ✅ (partial) | ✅ (Docker containment) |
-| Security audit command | ❌ | ✅ |
+| Security audit endpoint | ✅ v0.14.0 | ✅ |
 
 ---
 
@@ -175,6 +175,9 @@ completing the core ClawHub compatibility layer.
 | Distroless/minimal image | ✅ | ❌ |
 | Test harness (zero-credential CI) | ✅ v0.4.5 | partial |
 | GitHub Actions CI/CD | ✅ v0.13.0 | ✅ |
+| Multi-arch Docker (amd64+arm64) + GHCR | ✅ v0.14.0 | ✅ |
+| Helm chart current | ✅ v0.14.0 | ❌ |
+| User documentation | ✅ v0.14.0 | ✅ |
 | Admin API | ✅ v0.9.0 | ✅ |
 | Tailscale / public tunnel | ❌ | ✅ |
 | Remote device pairing | ❌ | ✅ |
@@ -186,7 +189,7 @@ Companion apps and voice are out of scope for a Go gateway.
 
 ---
 
-## Priority Matrix (post-v0.12.0)
+## Priority Matrix (post-v0.13.0)
 
 ### Shipped in v0.12.0
 1. ✅ **ClawHub SKILL.md dep validation** — `dep_check_enabled: true` in `skills` config
@@ -199,9 +202,16 @@ Companion apps and voice are out of scope for a Go gateway.
 6. ✅ **GitHub Actions CI/CD** — `.github/workflows/ci.yml` (push/PR) + `release.yml` (tag → release)
 7. ✅ **Harness integration test expansion** — `/v1/models`, `/admin/skills/deps`, `/v1/usage`, Signal unavailability
 
-### Larger investments — v0.14.x+
-- **Device pairing approval flow** — Signal device pairing, exec approval gates
-- **ClawMetry equivalent** — purpose-built observability dashboard
+### Shipped in v0.14.0
+8. ✅ **User documentation** — getting-started guide, configuration reference, per-channel setup, architecture update
+9. ✅ **Multi-arch Docker + GHCR** — release workflow builds linux/amd64 + linux/arm64, pushes to `ghcr.io/scttfrdmn/bucktooth`
+10. ✅ **Helm chart updated to v0.13.0** — Teams, Signal, cost tracking, all current tools and options
+11. ✅ **Security audit endpoint** — `GET /admin/audit` returns scored security posture report
+12. ✅ **Exec approval gates documented** — shell tool `require_approval=true` is the default; now documented and surfaced in audit
+
+### Larger investments — v0.15.x+
+- **Device pairing approval flow** — Signal device pairing UI
+- **ClawMetry equivalent** — purpose-built AI observability dashboard
 - iMessage/Matrix channels
 
 ### Out of scope for BuckTooth core

@@ -17,6 +17,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/scttfrdmn/agenkit/agenkit-go/skills"
 	"github.com/scttfrdmn/bucktooth/internal/channels"
+	"github.com/scttfrdmn/bucktooth/internal/config"
 	cronsched "github.com/scttfrdmn/bucktooth/internal/cron"
 	"github.com/scttfrdmn/bucktooth/internal/memory"
 	skillsdep "github.com/scttfrdmn/bucktooth/internal/skills"
@@ -64,6 +65,9 @@ type HTTPServer struct {
 
 	// Cost tracker for GET /v1/usage (nil when cost tracking is disabled)
 	costTracker *CostTracker
+
+	// Config for GET /admin/audit (nil when not set)
+	cfg *config.Config
 }
 
 // NewHTTPServer creates a new HTTP server
@@ -166,6 +170,11 @@ func (h *HTTPServer) SetDepChecker(dc *skillsdep.DepChecker) {
 // SetCostTracker attaches the cost tracker for the GET /v1/usage endpoint.
 func (h *HTTPServer) SetCostTracker(ct *CostTracker) {
 	h.costTracker = ct
+}
+
+// SetConfig attaches the gateway config for the GET /admin/audit endpoint.
+func (h *HTTPServer) SetConfig(cfg *config.Config) {
+	h.cfg = cfg
 }
 
 // BroadcastEvent sends payload to all connected dashboard WebSocket clients.
@@ -738,6 +747,92 @@ func (h *HTTPServer) handleCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// auditCheck is a single security posture check result.
+type auditCheck struct {
+	Name   string `json:"name"`
+	Status string `json:"status"` // "pass", "warn", "fail", "info"
+	Detail string `json:"detail"`
+}
+
+// auditResponse is the response body for GET /admin/audit.
+type auditResponse struct {
+	Score  int          `json:"score"`
+	Checks []auditCheck `json:"checks"`
+}
+
+// handleAdminAudit handles GET /admin/audit and returns a security posture report.
+func (h *HTTPServer) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
+	var checks []auditCheck
+
+	// api_token
+	if h.apiToken != "" {
+		checks = append(checks, auditCheck{"api_token", "pass", "Bearer token auth enabled"})
+	} else {
+		checks = append(checks, auditCheck{"api_token", "warn", "No API token — all non-probe routes are unauthenticated"})
+	}
+
+	// dashboard_auth
+	if h.dashAuthHash != "" {
+		checks = append(checks, auditCheck{"dashboard_auth", "pass", "Dashboard Basic auth enabled"})
+	} else {
+		checks = append(checks, auditCheck{"dashboard_auth", "warn", "No dashboard password — consider setting gateway.dashboard_auth_password"})
+	}
+
+	// rate_limiting
+	if h.cfg != nil && h.cfg.RateLimit.Enabled {
+		checks = append(checks, auditCheck{"rate_limiting", "pass", fmt.Sprintf("%d req/min per user", h.cfg.RateLimit.RequestsPerMinute)})
+	} else {
+		checks = append(checks, auditCheck{"rate_limiting", "warn", "Rate limiting disabled"})
+	}
+
+	// shell_approval
+	if h.cfg != nil && h.cfg.Tools.Shell.Enabled {
+		reqApproval := true
+		if v, ok := h.cfg.Tools.Shell.Options["require_approval"].(bool); ok {
+			reqApproval = v
+		}
+		if reqApproval {
+			checks = append(checks, auditCheck{"shell_approval", "pass", "shell tool require_approval=true"})
+		} else {
+			checks = append(checks, auditCheck{"shell_approval", "fail", "shell tool require_approval=false — commands run without human approval"})
+		}
+	} else {
+		checks = append(checks, auditCheck{"shell_approval", "info", "shell tool disabled"})
+	}
+
+	// message_dedup
+	if h.cfg != nil && h.cfg.Gateway.DedupEnabled {
+		checks = append(checks, auditCheck{"message_dedup", "pass", fmt.Sprintf("dedup window=%d", h.cfg.Gateway.DedupWindowSize)})
+	} else {
+		checks = append(checks, auditCheck{"message_dedup", "warn", "Message deduplication disabled"})
+	}
+
+	// tls — always info (BuckTooth does not terminate TLS)
+	checks = append(checks, auditCheck{"tls", "info", "TLS must be terminated by a reverse proxy or Ingress"})
+
+	// Score = passes / (passes + warns + fails) * 100; info items not counted.
+	passes, warns, fails := 0, 0, 0
+	for _, c := range checks {
+		switch c.Status {
+		case "pass":
+			passes++
+		case "warn":
+			warns++
+		case "fail":
+			fails++
+		}
+	}
+	score := 100
+	if total := passes + warns + fails; total > 0 {
+		score = passes * 100 / total
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(auditResponse{Score: score, Checks: checks}); err != nil {
+		h.logger.Error().Err(err).Msg("failed to encode audit response")
+	}
+}
+
 // Start starts the HTTP server
 func (h *HTTPServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
@@ -776,6 +871,7 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/admin/skills/reload", h.handleAdminSkillsReload)
 	mux.HandleFunc("/admin/skills/deps", h.handleAdminSkillsDeps)
 	mux.HandleFunc("/admin/channels/health", h.handleAdminChannelsHealth)
+	mux.HandleFunc("/admin/audit", h.handleAdminAudit)
 
 	// OpenAI-compatible endpoints (Bearer-token protected when configured)
 	mux.HandleFunc("/v1/chat/completions", h.handleCompletions)
