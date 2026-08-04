@@ -9,6 +9,32 @@ BuckTooth is a multi-channel AI assistant gateway (v0.14.0) written in Go. It co
 - **Go module**: `github.com/scttfrdmn/bucktooth`
 - **Agenkit module**: `github.com/scttfrdmn/agenkit/agenkit-go` (monorepo subdirectory), pinned to a published pseudo-version
 
+### Two agenkit repos — use the monorepo, not the mirror
+
+| Repo | Module path | Use it? |
+|------|-------------|---------|
+| `scttfrdmn/agenkit` | `github.com/scttfrdmn/agenkit/agenkit-go` | **Yes** — source of truth |
+| `scttfrdmn/agenkit-go` | `github.com/scttfrdmn/agenkit-go` | No — distribution mirror, lags behind |
+
+The mirror publishes clean semver tags (`v0.87.0`) and is tempting to pin to,
+but it lags the monorepo badly: as of 2026-08-03 its `v0.87.0` dates from
+2026-06-20 and still exposes the **old** `patterns` LLM interface (`Chat`),
+not the current `Complete`. Pinning it would silently revert the fix in
+`internal/gateway/router.go`. The module paths also differ, so it is not a
+drop-in substitute.
+
+The monorepo has no subdirectory-scoped tags (Go needs `agenkit-go/vX.Y.Z`),
+so a **pseudo-version is the only correct pin** until those are published.
+To bump it:
+
+```bash
+go get github.com/scttfrdmn/agenkit/agenkit-go@<monorepo-commit-sha>
+GOWORK=off go build ./... && go test ./...
+```
+
+Confirm the target commit is on `origin/main` first — a pseudo-version for an
+unpushed commit resolves locally but fails in CI.
+
 ### Local agenkit-go development
 
 `go.work` is intentionally **untracked and gitignored**. Committing it breaks

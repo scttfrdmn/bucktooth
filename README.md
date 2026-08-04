@@ -2,7 +2,7 @@
 
 **"No Claws All Teeth!"** &nbsp;·&nbsp; v0.14.0 &nbsp;·&nbsp; [![Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE) [![CI](https://github.com/scttfrdmn/bucktooth/actions/workflows/ci.yml/badge.svg)](https://github.com/scttfrdmn/bucktooth/actions/workflows/ci.yml)
 
-BuckTooth is a high-performance single-binary AI assistant gateway written in Go. It connects six messaging platforms to seven LLM providers via the [Agenkit-Go](https://github.com/scttfrdmn/agenkit-go) SDK, with conversation memory, tool use, skills, and production-grade observability — all in a ~25 MB binary.
+BuckTooth is a high-performance single-binary AI assistant gateway written in Go. It connects six messaging platforms to seven LLM providers via the [Agenkit-Go](https://github.com/scttfrdmn/agenkit/tree/main/agenkit-go) SDK, with conversation memory, tool use, skills, and production-grade observability — all in a ~25 MB binary.
 
 ---
 
