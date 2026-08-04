@@ -189,6 +189,41 @@ Companion apps and voice are out of scope for a Go gateway.
 
 ---
 
+## 10. Signed & Sandboxed Skills — planned, no sibling equivalent
+
+This is the one area where BuckTooth is not tracking a gap but opening a lead, so it is
+recorded separately from the parity tables above.
+
+| Capability | BuckTooth | RustyNail | OpenClaw / ClawHub |
+|-----------|-----------|-----------|--------------------|
+| Skill format | `SKILL.md` + MCP; **Wasm component planned** | `SKILL.md` | `SKILL.md` + MCP server |
+| Skill sandboxing | ❌ (dep *check* only) | ❌ | ❌ (host process authority) |
+| Capability manifest | 🚧 planned | ❌ | ❌ |
+| Skill signing / verification | 🚧 planned | 🚧 planned (twin) | ❌ |
+| Identity-pinned verification | 🚧 planned | 🚧 planned (twin) | ❌ |
+| OCI artifact distribution | 🚧 planned | 🚧 planned (twin) | ❌ (git/npm) |
+| Policy-gated capabilities | 🚧 planned | 🚧 planned (twin) | ❌ |
+
+ClawHub's 13,700+ skills are unsigned and unsandboxed: a `SKILL.md` plus an MCP server
+running with the full authority of the host process. BuckTooth's v0.12.0 dependency
+validation (§6) reached parity with that model, but a dependency *check* is not a
+boundary — confirming `curl` exists does not constrain what a skill does with it. The
+nearest containment row in this document is "Filesystem sandboxing | ✅ (partial) |
+✅ (Docker containment)" (§8), and neither project's answer there is strong.
+
+The [Signed & Sandboxed Skills](https://github.com/scttfrdmn/bucktooth/issues/75)
+milestone replaces the model rather than extending it: skills become Wasm components
+whose reachable syscalls are exactly the host functions the runtime linked, and that
+linking is derived from a signed, policy-evaluated capability manifest. Runtime is
+wazero here and wasmtime in RustyNail; the artifact format, manifest schema, attestation
+predicate, and verification rules are shared so artifacts published by either twin verify
+under both.
+
+Because this ships in both twins at once, it is not a parity item in either direction.
+Update this section as issues #76–#84 land.
+
+---
+
 ## Priority Matrix (post-v0.13.0)
 
 ### Shipped in v0.12.0

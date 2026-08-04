@@ -91,7 +91,7 @@ make deps           # go mod download && go mod tidy
 **Use GitHub for ALL task and project tracking. Never create local tracking files.**
 
 - **Issues**: All bugs, features, enhancements → `gh issue create`
-- **Milestones**: Release planning → use existing milestones (v0.2.0, v0.3.0, v1.0.0)
+- **Milestones**: Release planning → one milestone per `0.x.0` release
 - **Project board**: BuckTooth Roadmap at https://github.com/users/scttfrdmn/projects/
 - **Labels**: Use the structured label taxonomy (see below)
 
@@ -122,6 +122,18 @@ current state. Recent themes:
 
 **When cutting a release, close its milestone's issues.** Issues from shipped
 milestones were repeatedly left open; `make release-tag` does not close them.
+
+### Versioning: 0.x.x until further notice
+
+BuckTooth stays on `0.x.x` indefinitely. Do not plan, name, or create a `v1.0.0`
+milestone, and do not treat any feature as "the 1.0 blocker" — there is no 1.0 on
+the roadmap. Under SemVer, `0.x` means the public surface (config keys, HTTP
+routes, env vars) carries no compatibility guarantee, so breaking changes ship in
+a minor bump with a CHANGELOG note rather than waiting for a major.
+
+Feature milestones may use a theme name instead of a version when the target
+release isn't decided yet, but a **milestone title must never contain `v1`** —
+that reads as the 1.0 release. Prefer a plain theme name.
 
 ## CRITICAL: Parity Tracking
 
